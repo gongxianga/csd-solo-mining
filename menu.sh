@@ -3,6 +3,9 @@
 # CSD Solo 挖矿管理菜单
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
+# 版本号
+MENU_VERSION="v1.1.0"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,7 +40,7 @@ check_status() {
 show_menu() {
     clear
     echo -e "${BLUE}=========================================="
-    echo "  CSD Solo 挖矿管理菜单"
+    echo "  CSD Solo 挖矿管理菜单 ${MENU_VERSION}"
     echo -e "==========================================${NC}"
     echo ""
 
@@ -59,9 +62,10 @@ show_menu() {
     echo "6. 查看运行状态"
     echo "7. 重启挖矿"
     echo "8. 卸载程序"
+    echo "9. 更新菜单脚本"
     echo "0. 退出"
     echo ""
-    echo -n "请选择 [0-8]: "
+    echo -n "请选择 [0-9]: "
 }
 
 # 安装程序
@@ -377,6 +381,66 @@ uninstall_program() {
     read -n 1
 }
 
+# 更新菜单脚本
+update_menu() {
+    echo ""
+    echo -e "${BLUE}========== 更新菜单脚本 ==========${NC}"
+    echo ""
+
+    # 获取当前脚本路径
+    CURRENT_SCRIPT="$0"
+    SCRIPT_NAME=$(basename "$CURRENT_SCRIPT")
+
+    echo "当前脚本: $CURRENT_SCRIPT"
+    echo ""
+    echo -e "${YELLOW}确认更新到最新版本? (y/n)${NC}"
+    read -n 1 confirm
+    echo ""
+
+    if [ "$confirm" != "y" ]; then
+        echo "已取消"
+        sleep 1
+        return
+    fi
+
+    echo -e "${GREEN}正在从 GitHub 下载最新版本...${NC}"
+
+    # 下载到临时文件
+    TEMP_FILE="${CURRENT_SCRIPT}.new"
+
+    if command -v curl &> /dev/null; then
+        if curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o "$TEMP_FILE"; then
+            chmod +x "$TEMP_FILE"
+            mv "$TEMP_FILE" "$CURRENT_SCRIPT"
+            echo ""
+            echo -e "${GREEN}更新成功！重新启动菜单...${NC}"
+            sleep 2
+            exec "$CURRENT_SCRIPT"
+        else
+            echo -e "${RED}下载失败，请检查网络连接${NC}"
+            rm -f "$TEMP_FILE"
+        fi
+    elif command -v wget &> /dev/null; then
+        if wget -q https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -O "$TEMP_FILE"; then
+            chmod +x "$TEMP_FILE"
+            mv "$TEMP_FILE" "$CURRENT_SCRIPT"
+            echo ""
+            echo -e "${GREEN}更新成功！重新启动菜单...${NC}"
+            sleep 2
+            exec "$CURRENT_SCRIPT"
+        else
+            echo -e "${RED}下载失败，请检查网络连接${NC}"
+            rm -f "$TEMP_FILE"
+        fi
+    else
+        echo -e "${RED}错误: 未找到 curl 或 wget${NC}"
+    fi
+
+    echo ""
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
 # 主循环
 main() {
     while true; do
@@ -392,6 +456,7 @@ main() {
             6) view_status ;;
             7) restart_mining ;;
             8) uninstall_program ;;
+            9) update_menu ;;
             0)
                 echo ""
                 echo -e "${GREEN}再见！${NC}"

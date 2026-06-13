@@ -27,12 +27,14 @@ wget https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh &
 6. 📈 查看运行状态
 7. 🔄 重启挖矿
 8. 🗑️ 卸载程序
+9. ⬆️ 更新菜单脚本
 
 **特点：**
 - ✅ 一键式管理，简单易用
 - ✅ 自动后台运行，关闭SSH不会终止
 - ✅ 完整的安装、启动、监控流程
 - ✅ 支持单显卡和多显卡模式
+- ✅ 菜单可自我更新到最新版本
 
 ---
 
