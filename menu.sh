@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.6.0"
+MENU_VERSION="v1.7.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -63,6 +63,7 @@ show_menu() {
     echo "7. 查看运行状态"
     echo "8. 查看爆块统计"
     echo "9. 重启挖矿"
+    echo "d. 诊断信息（查看监控状态）"
     echo "u. 更新菜单脚本"
     echo "x. 卸载程序"
     echo "0. 退出"
@@ -415,17 +416,39 @@ view_status() {
             echo -e "本地区块: ${GREEN}#$block_num${NC}"
 
             # 从统计文件读取全网高度
+            local network_height=""
             if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
-                local network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
-                if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
-                    echo -e "全网高度: ${GREEN}#$network_height${NC}"
-                    local sync_diff=$((network_height - block_num))
-                    if [ "$sync_diff" -le 10 ]; then
-                        echo -e "同步差距: ${GREEN}$sync_diff 个区块${NC} (已同步)"
-                    else
-                        echo -e "同步差距: ${YELLOW}$sync_diff 个区块${NC} (同步中)"
-                    fi
+                network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+            fi
+
+            # 如果统计文件没有全网高度，尝试从日志中直接提取
+            if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
+                # 从日志中提取其他节点请求的最高区块号
+                local request_heights=$(tail -1000 "$log_file" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
+                if [ -n "$request_heights" ] && [ "$request_heights" -gt 0 ] 2>/dev/null; then
+                    network_height=$request_heights
                 fi
+            fi
+
+            # 显示全网高度和同步状态
+            if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
+                # 如果全网高度小于本地，使用本地高度
+                if [ "$network_height" -lt "$block_num" ]; then
+                    network_height=$block_num
+                fi
+
+                echo -e "全网高度: ${GREEN}#$network_height${NC}"
+                local sync_diff=$((network_height - block_num))
+                if [ "$sync_diff" -le 10 ]; then
+                    echo -e "同步差距: ${GREEN}$sync_diff 个区块${NC} (已同步)"
+                elif [ "$sync_diff" -le 100 ]; then
+                    echo -e "同步差距: ${YELLOW}$sync_diff 个区块${NC} (接近同步)"
+                else
+                    echo -e "同步差距: ${YELLOW}$sync_diff 个区块${NC} (同步中)"
+                fi
+            else
+                echo -e "全网高度: ${YELLOW}检测中...${NC}"
+                echo "提示: 等待区块监控程序收集数据（约1分钟）"
             fi
 
             # 显示区块工作量（如果有）
@@ -609,6 +632,115 @@ view_blocks_stats() {
     read -n 1
 }
 
+# 诊断信息
+diagnostic_info() {
+    echo ""
+    echo -e "${BLUE}=========================================="
+    echo "         诊断信息"
+    echo -e "==========================================${NC}"
+
+    if ! check_installation; then
+        echo -e "${YELLOW}程序未安装${NC}"
+        echo ""
+        echo "按任意键返回菜单..."
+        read -n 1
+        return
+    fi
+
+    echo -e "${GREEN}[进程状态]${NC}"
+    if pgrep -f "csd node" > /dev/null; then
+        echo -e "挖矿进程: ${GREEN}运行中${NC}"
+        pgrep -f "csd node" | head -3 | while read pid; do
+            echo "  PID: $pid"
+        done
+    else
+        echo -e "挖矿进程: ${RED}未运行${NC}"
+    fi
+
+    if pgrep -f "block-monitor.sh" > /dev/null; then
+        echo -e "监控进程: ${GREEN}运行中${NC}"
+        echo "  PID: $(pgrep -f "block-monitor.sh")"
+    else
+        echo -e "监控进程: ${RED}未运行${NC}"
+    fi
+    echo ""
+
+    echo -e "${GREEN}[监控文件]${NC}"
+    if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
+        echo "统计文件: 存在"
+        echo "内容:"
+        cat "$INSTALL_DIR/mining-stats.txt" | sed 's/^/  /'
+    else
+        echo -e "统计文件: ${RED}不存在${NC}"
+    fi
+    echo ""
+
+    if [ -f "$INSTALL_DIR/monitor.log" ]; then
+        echo "监控日志: 存在"
+        echo "最近5行:"
+        tail -5 "$INSTALL_DIR/monitor.log" | sed 's/^/  /'
+    else
+        echo -e "监控日志: ${RED}不存在${NC}"
+    fi
+    echo ""
+
+    echo -e "${GREEN}[日志分析]${NC}"
+    local log_file=""
+    if [ -f "$INSTALL_DIR/miner.log" ]; then
+        log_file="$INSTALL_DIR/miner.log"
+    elif [ -f "$INSTALL_DIR/miner1.log" ]; then
+        log_file="$INSTALL_DIR/miner1.log"
+    fi
+
+    if [ -n "$log_file" ]; then
+        echo "日志文件: $log_file"
+
+        # 检查日志中是否有区块高度信息
+        local tip_count=$(tail -500 "$log_file" | grep -c "tip=")
+        local height_count=$(tail -500 "$log_file" | grep -c "height=")
+        local sync_count=$(tail -500 "$log_file" | grep -c "\[sync\]")
+
+        echo "最近500行日志统计:"
+        echo "  - 包含 'tip=' 的行: $tip_count"
+        echo "  - 包含 'height=' 的行: $height_count"
+        echo "  - 包含 '[sync]' 的行: $sync_count"
+
+        # 提取一些示例行
+        echo ""
+        echo "最近的 tip 记录:"
+        tail -500 "$log_file" | grep "tip=" | tail -3 | sed 's/^/  /'
+
+        echo ""
+        echo "最近的 height 记录:"
+        tail -500 "$log_file" | grep "height=" | tail -3 | sed 's/^/  /'
+    else
+        echo -e "${RED}未找到日志文件${NC}"
+    fi
+
+    echo ""
+    echo -e "${GREEN}[建议]${NC}"
+    if ! pgrep -f "block-monitor.sh" > /dev/null; then
+        echo -e "${YELLOW}监控进程未运行，请尝试重启挖矿以启动监控${NC}"
+    elif [ ! -f "$INSTALL_DIR/mining-stats.txt" ]; then
+        echo -e "${YELLOW}统计文件不存在，监控程序可能刚启动，请等待1-2分钟${NC}"
+    else
+        local network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+        if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
+            echo -e "${YELLOW}全网高度为0或未获取，可能原因：${NC}"
+            echo "  1. 节点正在同步中，还未收到其他节点的区块信息"
+            echo "  2. 监控程序刚启动，等待1-2分钟后再查看"
+            echo "  3. 日志中缺少区块高度信息"
+        else
+            echo -e "${GREEN}监控运行正常，全网高度: $network_height${NC}"
+        fi
+    fi
+
+    echo ""
+    echo -e "${BLUE}==========================================${NC}"
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
 # 重启挖矿
 restart_mining() {
     echo ""
@@ -760,6 +892,7 @@ main() {
             7) view_status ;;
             8) view_blocks_stats ;;
             9) restart_mining ;;
+            d|D) diagnostic_info ;;
             u|U) update_menu ;;
             x|X) uninstall_program ;;
             0)

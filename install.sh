@@ -310,7 +310,7 @@ while true; do
         continue
     fi
 
-    # 提取本地区块高度
+    # 提取本地区块高度（本地 tip 高度）
     LOCAL_HEIGHT=""
     tip_block=$(tail -500 "$LOG_FILE" | grep -E "tip=0x.*h=[0-9]+" | tail -1)
     if [ -n "$tip_block" ]; then
@@ -322,19 +322,47 @@ while true; do
         LOCAL_HEIGHT=$(tail -500 "$LOG_FILE" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | tail -1)
     fi
 
-    # 获取全网高度（通过 RPC）
+    # 获取全网高度（从日志中提取其他节点请求的区块高度）
     NETWORK_HEIGHT=""
-    if command -v curl &> /dev/null; then
-        RPC_RESPONSE=$(curl -s -X POST http://localhost:8789 \
-            -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","method":"cs_getBlockNumber","params":[],"id":1}' 2>/dev/null)
 
-        if [ -n "$RPC_RESPONSE" ]; then
-            # 提取十六进制结果并转换为十进制
-            HEX_HEIGHT=$(echo "$RPC_RESPONSE" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
-            if [ -n "$HEX_HEIGHT" ]; then
-                NETWORK_HEIGHT=$((HEX_HEIGHT))
-            fi
+    # 方法1: 从 "request block" 日志中提取最高的区块号
+    REQUEST_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
+    if [ -n "$REQUEST_HEIGHTS" ] && [ "$REQUEST_HEIGHTS" -gt 0 ] 2>/dev/null; then
+        NETWORK_HEIGHT=$REQUEST_HEIGHTS
+    fi
+
+    # 方法2: 从 "got block" 或 "got headers" 中提取
+    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ]; then
+        HEADER_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep -E "got block|got headers" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | sort -n | tail -1)
+        if [ -n "$HEADER_HEIGHTS" ] && [ "$HEADER_HEIGHTS" -gt 0 ] 2>/dev/null; then
+            NETWORK_HEIGHT=$HEADER_HEIGHTS
+        fi
+    fi
+
+    # 方法3: 尝试 RPC（备用方案）
+    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ]; then
+        if command -v curl &> /dev/null; then
+            # 尝试多个可能的 RPC 方法
+            for method in "eth_blockNumber" "cs_getBlockNumber" "substrate_blockNumber"; do
+                RPC_RESPONSE=$(curl -s -m 2 -X POST http://localhost:8789 \
+                    -H "Content-Type: application/json" \
+                    -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":[],\"id\":1}" 2>/dev/null)
+
+                if [ -n "$RPC_RESPONSE" ] && echo "$RPC_RESPONSE" | grep -q "result"; then
+                    HEX_HEIGHT=$(echo "$RPC_RESPONSE" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
+                    if [ -n "$HEX_HEIGHT" ]; then
+                        NETWORK_HEIGHT=$((HEX_HEIGHT))
+                        break
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    # 如果全网高度小于本地高度，使用本地高度作为全网高度
+    if [ -n "$LOCAL_HEIGHT" ] && [ -n "$NETWORK_HEIGHT" ]; then
+        if [ "$NETWORK_HEIGHT" -lt "$LOCAL_HEIGHT" ]; then
+            NETWORK_HEIGHT=$LOCAL_HEIGHT
         fi
     fi
 
