@@ -359,45 +359,56 @@ while true; do
     # 获取全网高度
     NETWORK_HEIGHT=""
 
-    # 方法1: 从官方 API 获取（最准确）
+    # 方法1: 从官方 API 获取（最准确，最优先）
     if command -v curl &> /dev/null; then
         # 尝试从 Cairn 官方浏览器 API 获取
-        API_HEIGHT=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '[0-9]+')
+        API_HEIGHT=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
         if [ -n "$API_HEIGHT" ] && [ "$API_HEIGHT" -gt 0 ] 2>/dev/null; then
             NETWORK_HEIGHT=$API_HEIGHT
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - 全网高度获取成功 (API): $NETWORK_HEIGHT" >> "$SCRIPT_DIR/monitor.log"
         fi
 
         # 备用：尝试 health 接口
-        if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ]; then
+        if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ] 2>/dev/null; then
             API_HEALTH=$(curl -s -m 3 "https://cairn-substrate.com/health" 2>/dev/null)
             API_HEIGHT=$(echo "$API_HEALTH" | grep -oE '"indexed_height":[0-9]+' | grep -oE '[0-9]+')
             if [ -n "$API_HEIGHT" ] && [ "$API_HEIGHT" -gt 0 ] 2>/dev/null; then
                 NETWORK_HEIGHT=$API_HEIGHT
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - 全网高度获取成功 (health API): $NETWORK_HEIGHT" >> "$SCRIPT_DIR/monitor.log"
             fi
         fi
     fi
 
-    # 方法2: 从日志中提取其他节点请求的区块高度
-    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ]; then
-        REQUEST_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
+    # 方法2: 从日志中提取其他节点广播/请求的区块高度（排除本地 tip）
+    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ] 2>/dev/null; then
+        # 从 "request block" 或 "got block" 日志中提取（这些是网络上其他节点的高度）
+        # 注意：排除 [tip] 相关的日志，那是本地高度
+        REQUEST_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep -v "\[tip\]" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
         if [ -n "$REQUEST_HEIGHTS" ] && [ "$REQUEST_HEIGHTS" -gt 0 ] 2>/dev/null; then
-            NETWORK_HEIGHT=$REQUEST_HEIGHTS
+            # 只有当这个高度明显大于等于本地高度时才使用（避免使用旧的请求高度）
+            if [ -z "$LOCAL_HEIGHT" ] || [ "$REQUEST_HEIGHTS" -ge "$LOCAL_HEIGHT" ] 2>/dev/null; then
+                NETWORK_HEIGHT=$REQUEST_HEIGHTS
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - 全网高度获取成功 (日志): $NETWORK_HEIGHT" >> "$SCRIPT_DIR/monitor.log"
+            fi
         fi
     fi
 
-    # 方法3: 从 "got block" 或 "got headers" 中提取
-    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ]; then
-        HEADER_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep -E "got block|got headers" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | sort -n | tail -1)
+    # 方法3: 从 "got headers" 中提取最高值
+    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ] 2>/dev/null; then
+        HEADER_HEIGHTS=$(tail -1000 "$LOG_FILE" | grep "got headers" | grep -oE "count=[0-9]+" | grep -oE "[0-9]+" | sort -n | tail -1)
         if [ -n "$HEADER_HEIGHTS" ] && [ "$HEADER_HEIGHTS" -gt 0 ] 2>/dev/null; then
-            NETWORK_HEIGHT=$HEADER_HEIGHTS
+            # 如果收到的 headers count 很大，说明网络高度更高
+            if [ -n "$LOCAL_HEIGHT" ]; then
+                ESTIMATED_HEIGHT=$((LOCAL_HEIGHT + HEADER_HEIGHTS))
+                NETWORK_HEIGHT=$ESTIMATED_HEIGHT
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - 全网高度估算 (headers): $NETWORK_HEIGHT" >> "$SCRIPT_DIR/monitor.log"
+            fi
         fi
     fi
 
-    # 如果全网高度小于本地高度，使用本地高度作为全网高度
-    if [ -n "$LOCAL_HEIGHT" ] && [ -n "$NETWORK_HEIGHT" ]; then
-        if [ "$NETWORK_HEIGHT" -lt "$LOCAL_HEIGHT" ]; then
-            NETWORK_HEIGHT=$LOCAL_HEIGHT
-        fi
+    # 如果 API 获取失败且无法从日志推断，记录日志
+    if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ] 2>/dev/null; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - 警告: 无法获取全网高度" >> "$SCRIPT_DIR/monitor.log"
     fi
 
     # 检查是否爆块（检测到 mined 或 sealed block 等关键词）

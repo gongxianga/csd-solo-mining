@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.9.0"
+MENU_VERSION="v2.0.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -439,42 +439,41 @@ view_status() {
         if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
             echo -e "本地区块: ${GREEN}#$block_num${NC}"
 
-            # 获取全网高度
+            # 获取全网高度（优先使用官方 API）
             local network_height=""
 
-            # 方法1: 从统计文件读取（如果监控程序在运行）
-            if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
-                network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
-            fi
-
-            # 方法2: 直接从官方 API 获取（最准确）
-            if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
-                if command -v curl &> /dev/null; then
-                    local api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '[0-9]+')
-                    if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
-                        network_height=$api_height
-                    fi
+            # 方法1: 直接从官方 API 获取（最准确，最优先）
+            if command -v curl &> /dev/null; then
+                local api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
+                if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
+                    network_height=$api_height
                 fi
             fi
 
-            # 方法3: 从日志中直接提取
+            # 方法2: 从统计文件读取（如果监控程序在运行）
             if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
-                local request_heights=$(tail -1000 "$log_file" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
-                if [ -n "$request_heights" ] && [ "$request_heights" -gt 0 ] 2>/dev/null; then
-                    network_height=$request_heights
+                if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
+                    local stat_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+                    # 只有当统计高度大于本地高度时才使用（避免使用旧数据）
+                    if [ -n "$stat_height" ] && [ "$stat_height" -gt "$block_num" ] 2>/dev/null; then
+                        network_height=$stat_height
+                    fi
                 fi
             fi
 
             # 显示全网高度和同步状态
             if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
-                # 如果全网高度小于本地，使用本地高度
-                if [ "$network_height" -lt "$block_num" ]; then
-                    network_height=$block_num
-                fi
-
                 echo -e "全网高度: ${GREEN}#$network_height${NC}"
+
+                # 计算同步差距
                 local sync_diff=$((network_height - block_num))
-                if [ "$sync_diff" -le 10 ]; then
+
+                # 检查是否反常（本地高度大于全网高度）
+                if [ "$sync_diff" -lt 0 ]; then
+                    sync_diff=$((block_num - network_height))
+                    echo -e "同步状态: ${YELLOW}本地高度超前 $sync_diff 区块${NC}"
+                    echo "提示: 可能是全网高度数据延迟，或者你的节点在不同分支"
+                elif [ "$sync_diff" -le 10 ]; then
                     echo -e "同步差距: ${GREEN}$sync_diff 个区块${NC} (已同步)"
                 elif [ "$sync_diff" -le 100 ]; then
                     echo -e "同步差距: ${YELLOW}$sync_diff 个区块${NC} (接近同步)"
@@ -483,7 +482,7 @@ view_status() {
                 fi
             else
                 echo -e "全网高度: ${YELLOW}检测中...${NC}"
-                echo "提示: 等待区块监控程序收集数据（约1分钟）"
+                echo "提示: API 获取失败，请检查网络连接"
             fi
 
             # 显示区块工作量（如果有）
@@ -607,13 +606,25 @@ view_blocks_stats() {
         echo "本地高度: 未同步"
     fi
 
-    # 如果统计文件中没有全网高度，尝试从 API 获取
+    # 优先从 API 获取全网高度（最准确）
+    if command -v curl &> /dev/null; then
+        api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
+        if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
+            # API 获取成功，使用 API 高度
+            network_height=$api_height
+        fi
+    fi
+
+    # 如果 API 失败，从统计文件读取（但要验证合理性）
     if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
-        if command -v curl &> /dev/null; then
-            api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '[0-9]+')
-            if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
-                network_height=$api_height
+        stat_height=$(grep -oE '"network_height": [0-9]+' "$STATS_FILE" | grep -oE '[0-9]+')
+        # 只有当统计高度明显大于本地高度时才使用
+        if [ -n "$stat_height" ] && [ -n "$local_height" ]; then
+            if [ "$stat_height" -ge "$local_height" ] 2>/dev/null; then
+                network_height=$stat_height
             fi
+        elif [ -n "$stat_height" ] && [ -z "$local_height" ]; then
+            network_height=$stat_height
         fi
     fi
 
@@ -622,16 +633,24 @@ view_blocks_stats() {
 
         if [ -n "$local_height" ] && [ "$local_height" -gt 0 ] 2>/dev/null; then
             sync_diff=$((network_height - local_height))
-            sync_percent=$((local_height * 100 / network_height))
-            if [ "$sync_diff" -le 10 ]; then
-                echo -e "同步进度: ${GREEN}${sync_percent}%${NC} (已同步，差距 $sync_diff 区块)"
+
+            if [ "$sync_diff" -lt 0 ]; then
+                # 本地高度超过全网高度
+                sync_diff=$((local_height - network_height))
+                echo -e "同步状态: ${YELLOW}本地超前 $sync_diff 区块${NC}"
             else
-                echo -e "同步进度: ${YELLOW}${sync_percent}%${NC} (同步中，差距 $sync_diff 区块)"
+                # 正常情况
+                sync_percent=$((local_height * 100 / network_height))
+                if [ "$sync_diff" -le 10 ]; then
+                    echo -e "同步进度: ${GREEN}${sync_percent}%${NC} (已同步，差距 $sync_diff 区块)"
+                else
+                    echo -e "同步进度: ${YELLOW}${sync_percent}%${NC} (同步中，差距 $sync_diff 区块)"
+                fi
             fi
         fi
     else
-        echo -e "全网高度: ${YELLOW}检测中...${NC}"
-        echo "提示: 正在从官方 API 获取数据"
+        echo -e "全网高度: ${YELLOW}获取失败${NC}"
+        echo "提示: 请检查网络连接或稍后重试"
     fi
     echo ""
 
@@ -730,9 +749,9 @@ diagnostic_info() {
     fi
     echo ""
 
-    echo -e "${GREEN}[RPC 接口测试]${NC}"
+    echo -e "${GREEN}[本地 RPC 接口测试]${NC}"
     if command -v curl &> /dev/null; then
-        echo "测试本地 RPC (localhost:8789)..."
+        echo "测试本地节点 RPC (localhost:8789)..."
 
         # 测试多个方法
         for method in "eth_blockNumber" "cs_blockNumber" "substrate_blockNumber"; do
@@ -746,7 +765,7 @@ diagnostic_info() {
                     hex_val=$(echo "$rpc_result" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
                     if [ -n "$hex_val" ]; then
                         dec_val=$((hex_val))
-                        echo -e "${GREEN}成功 (高度: $dec_val)${NC}"
+                        echo -e "${GREEN}成功 (本地高度: $dec_val)${NC}"
                     else
                         echo -e "${YELLOW}返回但无高度数据${NC}"
                     fi
@@ -757,6 +776,40 @@ diagnostic_info() {
                 echo -e "${RED}无响应${NC}"
             fi
         done
+    else
+        echo -e "${RED}curl 未安装${NC}"
+    fi
+    echo ""
+
+    echo -e "${GREEN}[全网高度 API 测试]${NC}"
+    if command -v curl &> /dev/null; then
+        echo "测试官方 API (cairn-substrate.com)..."
+
+        echo -n "  测试 /blocks/tip/height: "
+        api_result=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null)
+        if [ -n "$api_result" ]; then
+            api_height=$(echo "$api_result" | grep -oE '^[0-9]+$')
+            if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
+                echo -e "${GREEN}成功 (全网高度: $api_height)${NC}"
+            else
+                echo -e "${RED}返回数据格式错误: $api_result${NC}"
+            fi
+        else
+            echo -e "${RED}无响应或超时${NC}"
+        fi
+
+        echo -n "  测试 /health: "
+        health_result=$(curl -s -m 3 "https://cairn-substrate.com/health" 2>/dev/null)
+        if [ -n "$health_result" ]; then
+            health_height=$(echo "$health_result" | grep -oE '"indexed_height":[0-9]+' | grep -oE '[0-9]+')
+            if [ -n "$health_height" ] && [ "$health_height" -gt 0 ] 2>/dev/null; then
+                echo -e "${GREEN}成功 (索引高度: $health_height)${NC}"
+            else
+                echo -e "${YELLOW}返回但无高度数据${NC}"
+            fi
+        else
+            echo -e "${RED}无响应或超时${NC}"
+        fi
     else
         echo -e "${RED}curl 未安装${NC}"
     fi
@@ -833,15 +886,24 @@ diagnostic_info() {
 
         if [ -z "$local_h" ] || [ "$local_h" -eq 0 ] 2>/dev/null; then
             echo -e "${YELLOW}本地高度为0或未获取，建议：${NC}"
-            echo "  1. 检查上方 RPC 测试结果"
+            echo "  1. 检查上方 '本地 RPC 接口测试' 结果"
             echo "  2. 查看日志示例中是否有 h= 数字"
             echo "  3. 等待节点完成初始化（2-5分钟）"
         elif [ -z "$network_h" ] || [ "$network_h" -eq 0 ] 2>/dev/null; then
             echo -e "${YELLOW}全网高度未获取，但本地高度正常: $local_h${NC}"
-            echo "  提示: 全网高度通过官方 API 获取，可能网络暂时不可达"
+            echo "  1. 检查上方 '全网高度 API 测试' 结果"
+            echo "  2. 确认网络连接正常"
+            echo "  3. 可能是 API 暂时不可用"
+        elif [ "$local_h" -eq "$network_h" ] 2>/dev/null; then
+            echo -e "${YELLOW}本地高度和全网高度相同: $local_h${NC}"
+            echo "  可能原因："
+            echo "  1. 已完全同步（正常情况）"
+            echo "  2. 全网高度获取失败，被设置为本地高度（异常）"
+            echo "  请检查上方 '全网高度 API 测试' 是否成功"
         else
+            local diff=$((network_h - local_h))
             echo -e "${GREEN}监控运行正常${NC}"
-            echo "  本地高度: $local_h | 全网高度: $network_h"
+            echo "  本地高度: $local_h | 全网高度: $network_h | 差距: $diff"
         fi
     fi
 
