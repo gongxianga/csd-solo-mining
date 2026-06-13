@@ -27,7 +27,23 @@ chmod +x install.sh
 cd ~/csd-solo-miner
 ```
 
-**单实例挖矿：**
+#### 方式一：交互式菜单（推荐）
+
+```bash
+./menu.sh
+```
+
+菜单功能包括：
+- 🚀 一键启动单显卡/多显卡挖矿
+- 🛑 停止挖矿
+- 📊 实时查看日志
+- 🔄 重启挖矿
+- 📈 查看运行状态
+- ⚙️ 自动后台运行（关闭SSH不会终止）
+
+#### 方式二：命令行启动
+
+**单显卡挖矿：**
 ```bash
 ./start-mining.sh 0x你的钱包地址
 ```
@@ -44,6 +60,10 @@ cd ~/csd-solo-miner
 
 **查看日志：**
 ```bash
+# 单显卡
+tail -f miner.log
+
+# 多显卡
 tail -f miner1.log
 ```
 
@@ -57,13 +77,16 @@ tail -f miner1.log
 
 ## 功能特性
 
+- ✅ 交互式菜单，一键启动管理
+- ✅ 后台运行，关闭SSH不会终止
 - ✅ 自动安装所有依赖（Rust、构建工具等）
 - ✅ 自动编译最新版本（v1.0.4）
 - ✅ 自动下载和验证创世文件
-- ✅ 支持单实例和多实例挖矿
+- ✅ 支持单显卡和多显卡挖矿
 - ✅ 多显卡并行挖矿支持
 - ✅ 自动配置引导节点
-- ✅ 日志输出和管理
+- ✅ 完整的日志输出和管理
+- ✅ 实时状态监控
 
 ## 目录结构
 
@@ -71,12 +94,14 @@ tail -f miner1.log
 ~/csd-solo-miner/
 ├── target/release/csd      # 编译好的节点程序
 ├── genesis.bin             # 创世文件
-├── start-mining.sh         # 单实例启动脚本
-├── start-multi-gpu.sh      # 多实例启动脚本
+├── menu.sh                 # 交互式菜单脚本（推荐）
+├── start-mining.sh         # 单显卡启动脚本
+├── start-multi-gpu.sh      # 多显卡启动脚本
 ├── stop-mining.sh          # 停止脚本
-├── cs.db/                  # 单实例数据目录
-├── cs_gpu1.db/            # 多实例数据目录
-└── miner*.log             # 挖矿日志文件
+├── cs.db/                  # 单显卡数据目录
+├── cs_gpu1.db/             # 多显卡数据目录
+├── miner.log               # 单显卡日志文件
+└── miner*.log              # 多显卡日志文件
 ```
 
 ## 常见问题

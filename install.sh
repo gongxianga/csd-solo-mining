@@ -164,6 +164,236 @@ EOF
 
 chmod +x stop-mining.sh
 
+# 创建菜单管理脚本
+cat > menu.sh << 'EOF'
+#!/bin/bash
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# 检查进程状态
+check_status() {
+    if pgrep -f "csd node" > /dev/null; then
+        echo -e "${GREEN}运行中${NC}"
+        return 0
+    else
+        echo -e "${RED}未运行${NC}"
+        return 1
+    fi
+}
+
+# 显示菜单
+show_menu() {
+    clear
+    echo -e "${BLUE}=========================================="
+    echo "  CSD Solo 挖矿管理菜单"
+    echo -e "==========================================${NC}"
+    echo ""
+    echo -n "当前状态: "
+    check_status
+    echo ""
+    echo "1. 启动单显卡挖矿"
+    echo "2. 启动多显卡挖矿"
+    echo "3. 停止挖矿"
+    echo "4. 查看实时日志"
+    echo "5. 查看运行状态"
+    echo "6. 重启挖矿"
+    echo "0. 退出"
+    echo ""
+    echo -n "请选择 [0-6]: "
+}
+
+# 启动单显卡
+start_single() {
+    echo ""
+    echo -n "请输入钱包地址: "
+    read wallet
+
+    if [ -z "$wallet" ]; then
+        echo -e "${RED}错误: 钱包地址不能为空${NC}"
+        sleep 2
+        return
+    fi
+
+    if check_status > /dev/null 2>&1; then
+        echo -e "${YELLOW}检测到挖矿进程正在运行，是否停止并重启? (y/n)${NC}"
+        read -n 1 confirm
+        echo ""
+        if [ "$confirm" = "y" ]; then
+            ./stop-mining.sh
+            sleep 2
+        else
+            return
+        fi
+    fi
+
+    echo -e "${GREEN}正在启动单显卡挖矿...${NC}"
+    ./start-mining.sh "$wallet"
+    sleep 2
+    echo ""
+    echo -e "${GREEN}启动完成！${NC}"
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 启动多显卡
+start_multi() {
+    echo ""
+    echo -n "请输入钱包地址: "
+    read wallet
+
+    if [ -z "$wallet" ]; then
+        echo -e "${RED}错误: 钱包地址不能为空${NC}"
+        sleep 2
+        return
+    fi
+
+    echo -n "请输入显卡数量 [默认4]: "
+    read gpu_count
+    gpu_count=${gpu_count:-4}
+
+    if check_status > /dev/null 2>&1; then
+        echo -e "${YELLOW}检测到挖矿进程正在运行，是否停止并重启? (y/n)${NC}"
+        read -n 1 confirm
+        echo ""
+        if [ "$confirm" = "y" ]; then
+            ./stop-mining.sh
+            sleep 2
+        else
+            return
+        fi
+    fi
+
+    echo -e "${GREEN}正在启动 $gpu_count 显卡挖矿...${NC}"
+    ./start-multi-gpu.sh "$wallet" "$gpu_count"
+    sleep 2
+    echo ""
+    echo -e "${GREEN}启动完成！${NC}"
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 停止挖矿
+stop_mining() {
+    echo ""
+    if ! check_status > /dev/null 2>&1; then
+        echo -e "${YELLOW}没有运行中的挖矿进程${NC}"
+        sleep 2
+        return
+    fi
+
+    echo -e "${YELLOW}确认停止挖矿? (y/n)${NC}"
+    read -n 1 confirm
+    echo ""
+
+    if [ "$confirm" = "y" ]; then
+        echo -e "${GREEN}正在停止挖矿...${NC}"
+        ./stop-mining.sh
+        sleep 2
+        echo -e "${GREEN}已停止！${NC}"
+    fi
+
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 查看日志
+view_logs() {
+    echo ""
+    if [ -f "miner.log" ]; then
+        echo -e "${GREEN}单显卡日志 (Ctrl+C 退出):${NC}"
+        tail -f miner.log
+    elif [ -f "miner1.log" ]; then
+        echo -e "${GREEN}多显卡日志 - 显卡1 (Ctrl+C 退出):${NC}"
+        tail -f miner1.log
+    else
+        echo -e "${RED}未找到日志文件${NC}"
+        sleep 2
+    fi
+}
+
+# 查看状态
+view_status() {
+    echo ""
+    echo -e "${BLUE}========== 运行状态 ==========${NC}"
+
+    if check_status > /dev/null 2>&1; then
+        echo ""
+        echo "进程列表:"
+        ps aux | grep "csd node" | grep -v grep
+        echo ""
+        echo "日志文件:"
+        ls -lh *.log 2>/dev/null || echo "  无日志文件"
+    else
+        echo -e "${YELLOW}当前没有运行中的挖矿进程${NC}"
+    fi
+
+    echo ""
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 重启挖矿
+restart_mining() {
+    echo ""
+    if ! check_status > /dev/null 2>&1; then
+        echo -e "${YELLOW}没有运行中的挖矿进程，请使用启动功能${NC}"
+        sleep 2
+        return
+    fi
+
+    echo -e "${YELLOW}确认重启挖矿? (y/n)${NC}"
+    read -n 1 confirm
+    echo ""
+
+    if [ "$confirm" = "y" ]; then
+        echo -e "${GREEN}正在重启...${NC}"
+        ./stop-mining.sh
+        sleep 3
+
+        # 检测之前运行的是单显卡还是多显卡
+        if [ -f "miner1.log" ]; then
+            echo "检测到多显卡配置，重启多显卡模式"
+            # 需要用户重新输入钱包地址
+            start_multi
+        else
+            echo "检测到单显卡配置，重启单显卡模式"
+            start_single
+        fi
+    fi
+}
+
+# 主循环
+while true; do
+    show_menu
+    read choice
+
+    case $choice in
+        1) start_single ;;
+        2) start_multi ;;
+        3) stop_mining ;;
+        4) view_logs ;;
+        5) view_status ;;
+        6) restart_mining ;;
+        0)
+            echo ""
+            echo -e "${GREEN}再见！${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            sleep 1
+            ;;
+    esac
+done
+EOF
+
+chmod +x menu.sh
+
 echo ""
 echo -e "${GREEN}=========================================="
 echo "安装完成！"
@@ -171,24 +401,30 @@ echo "==========================================${NC}"
 echo ""
 echo "目录: $INSTALL_DIR"
 echo ""
-echo "使用方法："
+echo -e "${YELLOW}快速启动（推荐）：${NC}"
 echo ""
-echo "1. 单显卡后台运行："
-echo "   cd $INSTALL_DIR"
-echo "   ./start-mining.sh <你的钱包地址>"
-echo "   (自动后台运行，关闭SSH不会终止)"
+echo -e "   ${GREEN}cd $INSTALL_DIR && ./menu.sh${NC}"
 echo ""
-echo "2. 多显卡后台运行（默认4个实例）："
-echo "   cd $INSTALL_DIR"
-echo "   ./start-multi-gpu.sh <你的钱包地址> 4"
+echo "菜单功能："
+echo "  - 一键启动/停止挖矿"
+echo "  - 自动后台运行（关闭SSH不会终止）"
+echo "  - 实时查看日志和状态"
+echo "  - 支持单显卡/多显卡切换"
 echo ""
-echo "3. 停止运行："
+echo "=========================================="
+echo ""
+echo "手动启动方式："
+echo ""
+echo "1. 单显卡："
 echo "   cd $INSTALL_DIR"
+echo "   ./start-mining.sh <钱包地址>"
+echo ""
+echo "2. 多显卡："
+echo "   cd $INSTALL_DIR"
+echo "   ./start-multi-gpu.sh <钱包地址> 4"
+echo ""
+echo "3. 停止："
 echo "   ./stop-mining.sh"
-echo ""
-echo "4. 查看日志："
-echo "   单显卡: tail -f $INSTALL_DIR/miner.log"
-echo "   多显卡: tail -f $INSTALL_DIR/miner1.log"
 echo ""
 echo -e "${YELLOW}注意：首次启动需要同步区块链，可能需要一些时间${NC}"
 echo ""
