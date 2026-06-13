@@ -134,7 +134,7 @@ start_single() {
         read -n 1 confirm
         echo ""
         if [ "$confirm" = "y" ]; then
-            cd "$INSTALL_DIR" && bash stop-mining.sh
+            bash "$INSTALL_DIR/stop-mining.sh"
             sleep 2
         else
             return
@@ -142,7 +142,15 @@ start_single() {
     fi
 
     echo -e "${GREEN}正在启动单显卡挖矿...${NC}"
-    cd "$INSTALL_DIR" && bash start-mining.sh "$wallet"
+
+    if [ ! -f "$INSTALL_DIR/start-mining.sh" ]; then
+        echo -e "${RED}错误: 启动脚本不存在${NC}"
+        echo "请重新安装程序"
+        sleep 2
+        return
+    fi
+
+    cd "$INSTALL_DIR" && bash "$INSTALL_DIR/start-mining.sh" "$wallet"
     sleep 2
     echo ""
     echo -e "${GREEN}启动完成！${NC}"
@@ -178,7 +186,7 @@ start_multi() {
         read -n 1 confirm
         echo ""
         if [ "$confirm" = "y" ]; then
-            cd "$INSTALL_DIR" && bash stop-mining.sh
+            bash "$INSTALL_DIR/stop-mining.sh"
             sleep 2
         else
             return
@@ -186,7 +194,15 @@ start_multi() {
     fi
 
     echo -e "${GREEN}正在启动 $gpu_count 显卡挖矿...${NC}"
-    cd "$INSTALL_DIR" && bash start-multi-gpu.sh "$wallet" "$gpu_count"
+
+    if [ ! -f "$INSTALL_DIR/start-multi-gpu.sh" ]; then
+        echo -e "${RED}错误: 启动脚本不存在${NC}"
+        echo "请重新安装程序"
+        sleep 2
+        return
+    fi
+
+    cd "$INSTALL_DIR" && bash "$INSTALL_DIR/start-multi-gpu.sh" "$wallet" "$gpu_count"
     sleep 2
     echo ""
     echo -e "${GREEN}启动完成！${NC}"
@@ -216,7 +232,7 @@ stop_mining() {
 
     if [ "$confirm" = "y" ]; then
         echo -e "${GREEN}正在停止挖矿...${NC}"
-        cd "$INSTALL_DIR" && bash stop-mining.sh
+        bash "$INSTALL_DIR/stop-mining.sh"
         sleep 2
         echo -e "${GREEN}已停止！${NC}"
     fi
@@ -308,7 +324,7 @@ restart_mining() {
 
     if [ "$confirm" = "y" ]; then
         echo -e "${GREEN}正在重启...${NC}"
-        cd "$INSTALL_DIR" && bash stop-mining.sh
+        bash "$INSTALL_DIR/stop-mining.sh"
         sleep 3
 
         # 检测之前运行的是单显卡还是多显卡
