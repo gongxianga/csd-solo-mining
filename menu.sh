@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.3.2"
+MENU_VERSION="v1.4.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -376,36 +376,36 @@ view_status() {
             echo -e "RPC 端口: ${YELLOW}检测中...${NC}"
         fi
 
-        # 从日志提取区块高度 - 多种模式匹配
+        # 从日志提取区块高度 - CSD 特定格式
         local block_num=""
-        local best_block_line=""
+        local tip_block=""
 
-        # 模式1: "best: #数字" 或 "best block: #数字" 或 "best=#数字"
-        best_block_line=$(tail -200 "$log_file" | grep -iE "best" | tail -1)
-        if [ -n "$best_block_line" ]; then
-            block_num=$(echo "$best_block_line" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
-            if [ -z "$block_num" ]; then
-                block_num=$(echo "$best_block_line" | grep -oE "best[=:][[:space:]]*[0-9]+" | grep -oE "[0-9]+" | tail -1)
-            fi
+        # 模式1: "h=数字" 格式（tip 区块高度）
+        tip_block=$(tail -200 "$log_file" | grep -E "tip=0x.*h=[0-9]+" | tail -1)
+        if [ -n "$tip_block" ]; then
+            block_num=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
         fi
 
-        # 模式2: "imported block #数字" 或 "import.*#数字"
+        # 模式2: "(height=数字)" 格式（正在请求的区块）
         if [ -z "$block_num" ]; then
-            block_num=$(tail -200 "$log_file" | grep -iE "import" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
+            block_num=$(tail -200 "$log_file" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | tail -1)
         fi
 
-        # 模式3: "height: 数字" 或 "height=数字"
+        # 模式3: "height=数字" 格式
         if [ -z "$block_num" ]; then
-            block_num=$(tail -200 "$log_file" | grep -iE "height" | grep -oE "(height[=:][[:space:]]*[0-9]+)" | grep -oE "[0-9]+" | tail -1)
-        fi
-
-        # 模式4: 日志时间戳后的数字 (可能是区块号)
-        if [ -z "$block_num" ]; then
-            block_num=$(tail -200 "$log_file" | grep -oE "\[[0-9]{4}-[0-9]{2}-[0-9]{2}.*\].*[[:space:]][0-9]{4,}" | grep -oE "[[:space:]][0-9]{4,}" | tail -1 | tr -d ' ')
+            block_num=$(tail -200 "$log_file" | grep -oE "height=[0-9]+" | grep -oE "[0-9]+" | tail -1)
         fi
 
         if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
             echo -e "当前区块: ${GREEN}#$block_num${NC}"
+
+            # 显示区块工作量（如果有）
+            if [ -n "$tip_block" ]; then
+                local work=$(echo "$tip_block" | grep -oE "w=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+                if [ -n "$work" ]; then
+                    echo "区块工作量: $work"
+                fi
+            fi
         else
             # 如果找不到明确的区块号，显示正在同步中
             local sync_count=$(tail -100 "$log_file" | grep -c "sync\|gossip\|request")
@@ -416,23 +416,34 @@ view_status() {
             fi
         fi
 
-        # 提取连接的节点数
-        local peer_line=$(tail -100 "$log_file" | grep -iE "peer" | tail -1)
+        # 提取已知节点数 (known_peers 数字 -> 数字)
+        local peer_line=$(tail -200 "$log_file" | grep "known_peers" | tail -1)
         if [ -n "$peer_line" ]; then
-            local peer_count=$(echo "$peer_line" | grep -oE "[0-9]+" | head -1)
+            local peer_count=$(echo "$peer_line" | grep -oE "known_peers [0-9]+ -> [0-9]+" | grep -oE "[0-9]+$")
             if [ -n "$peer_count" ] && [ "$peer_count" -gt 0 ] 2>/dev/null; then
-                echo "连接节点数: $peer_count"
+                echo -e "已知节点数: ${GREEN}$peer_count${NC}"
             fi
         fi
 
-        # 检查是否正在同步
-        local sync_line=$(tail -50 "$log_file" | grep -iE "sync|gossip|request" | tail -1)
-        if [ -n "$sync_line" ]; then
+        # 检查同步状态和活动
+        local recent_logs=$(tail -50 "$log_file")
+        local sync_count=$(echo "$recent_logs" | grep -c "\[sync\]")
+        local reorg_count=$(echo "$recent_logs" | grep -c "\[reorg\]")
+        local got_headers=$(echo "$recent_logs" | grep -c "got headers")
+        local got_block=$(echo "$recent_logs" | grep -c "got block")
+
+        if [ "$sync_count" -gt 0 ] || [ "$got_headers" -gt 0 ]; then
             echo -e "同步状态: ${YELLOW}同步中${NC}"
-            # 提取正在请求的对等节点
-            local peer_id=$(echo "$sync_line" | grep -oE "12D3[A-Za-z0-9]{50,}" | head -1)
-            if [ -n "$peer_id" ]; then
-                echo "正在从节点同步: ${peer_id:0:20}..."
+
+            # 显示最近收到的头部和区块
+            if [ "$got_headers" -gt 0 ]; then
+                echo "  - 最近收到 headers: $got_headers 次"
+            fi
+            if [ "$got_block" -gt 0 ]; then
+                echo "  - 最近收到 blocks: $got_block 次"
+            fi
+            if [ "$reorg_count" -gt 0 ]; then
+                echo -e "  - ${YELLOW}检测到链重组: $reorg_count 次${NC}"
             fi
         else
             echo -e "同步状态: ${GREEN}已同步${NC}"
