@@ -80,19 +80,24 @@ BOOTNODES="BOOTNODES_PLACEHOLDER"
 DATADIR="cs.db"
 
 # 启动挖矿
-echo "启动 Compute Substrate Solo 挖矿..."
+echo "启动 Compute Substrate Solo..."
 echo "矿工地址: $MINER_ADDR"
 echo "数据目录: $DATADIR"
 echo ""
 
-./target/release/csd node \
+nohup ./target/release/csd node \
   --mine \
   --miner-addr20 $MINER_ADDR \
   --datadir $DATADIR \
   --genesis genesis.bin \
   --rpc 0.0.0.0:8789 \
   --p2p-listen /ip4/0.0.0.0/tcp/18007 \
-  --bootnodes $BOOTNODES
+  --bootnodes $BOOTNODES \
+  > miner.log 2>&1 &
+
+echo "已在后台启动！"
+echo "查看日志: tail -f miner.log"
+echo "停止运行: ./stop-mining.sh"
 EOF
 
 # 替换引导节点
@@ -168,20 +173,22 @@ echo "目录: $INSTALL_DIR"
 echo ""
 echo "使用方法："
 echo ""
-echo "1. 单实例挖矿："
+echo "1. 单显卡后台运行："
 echo "   cd $INSTALL_DIR"
 echo "   ./start-mining.sh <你的钱包地址>"
+echo "   (自动后台运行，关闭SSH不会终止)"
 echo ""
-echo "2. 多显卡挖矿（默认4个实例）："
+echo "2. 多显卡后台运行（默认4个实例）："
 echo "   cd $INSTALL_DIR"
 echo "   ./start-multi-gpu.sh <你的钱包地址> 4"
 echo ""
-echo "3. 停止挖矿："
+echo "3. 停止运行："
 echo "   cd $INSTALL_DIR"
 echo "   ./stop-mining.sh"
 echo ""
 echo "4. 查看日志："
-echo "   tail -f $INSTALL_DIR/miner1.log"
+echo "   单显卡: tail -f $INSTALL_DIR/miner.log"
+echo "   多显卡: tail -f $INSTALL_DIR/miner1.log"
 echo ""
 echo -e "${YELLOW}注意：首次启动需要同步区块链，可能需要一些时间${NC}"
 echo ""
