@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.3.1"
+MENU_VERSION="v1.3.2"
 
 # 颜色定义
 RED='\033[0;31m'
