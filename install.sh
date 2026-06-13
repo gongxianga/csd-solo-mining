@@ -113,15 +113,23 @@ nohup ./target/release/csd node \
 
 # 启动日志清理脚本
 if [ -f "$SCRIPT_DIR/log-cleaner.sh" ]; then
-    # 检查是否已经在运行
     if ! pgrep -f "log-cleaner.sh" > /dev/null; then
         nohup bash "$SCRIPT_DIR/log-cleaner.sh" > /dev/null 2>&1 &
         echo "日志清理程序已启动（每30分钟清理一次）"
     fi
 fi
 
+# 启动区块监控脚本
+if [ -f "$SCRIPT_DIR/block-monitor.sh" ]; then
+    if ! pgrep -f "block-monitor.sh" > /dev/null; then
+        nohup bash "$SCRIPT_DIR/block-monitor.sh" > /dev/null 2>&1 &
+        echo "区块监控程序已启动（实时监控同步进度和爆块）"
+    fi
+fi
+
 echo "已在后台启动！"
 echo "查看日志: tail -f $SCRIPT_DIR/miner.log"
+echo "查看监控: tail -f $SCRIPT_DIR/monitor.log"
 echo "停止运行: $SCRIPT_DIR/stop-mining.sh"
 EOF
 
@@ -190,15 +198,23 @@ echo ""
 
 # 启动日志清理脚本
 if [ -f "$SCRIPT_DIR/log-cleaner.sh" ]; then
-    # 检查是否已经在运行
     if ! pgrep -f "log-cleaner.sh" > /dev/null; then
         nohup bash "$SCRIPT_DIR/log-cleaner.sh" > /dev/null 2>&1 &
         echo "日志清理程序已启动（每30分钟清理一次）"
     fi
 fi
 
+# 启动区块监控脚本
+if [ -f "$SCRIPT_DIR/block-monitor.sh" ]; then
+    if ! pgrep -f "block-monitor.sh" > /dev/null; then
+        nohup bash "$SCRIPT_DIR/block-monitor.sh" > /dev/null 2>&1 &
+        echo "区块监控程序已启动（实时监控同步进度和爆块）"
+    fi
+fi
+
 echo "所有挖矿实例已启动！"
 echo "查看日志: tail -f $SCRIPT_DIR/miner1.log"
+echo "查看监控: tail -f $SCRIPT_DIR/monitor.log"
 echo "停止运行: $SCRIPT_DIR/stop-mining.sh"
 EOF
 
@@ -235,9 +251,135 @@ if pgrep -f 'log-cleaner.sh' > /dev/null; then
     pkill -f 'log-cleaner.sh'
     echo "日志清理进程已停止"
 fi
+
+# 停止区块监控进程
+if pgrep -f 'block-monitor.sh' > /dev/null; then
+    echo "停止区块监控进程..."
+    pkill -f 'block-monitor.sh'
+    echo "区块监控进程已停止"
+fi
 EOF
 
 chmod +x stop-mining.sh
+
+# 创建区块监控和爆块统计脚本
+cat > block-monitor.sh << 'EOF'
+#!/bin/bash
+
+# 获取脚本所在目录
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+
+# 统计文件
+STATS_FILE="$SCRIPT_DIR/mining-stats.txt"
+BLOCKS_FOUND_FILE="$SCRIPT_DIR/blocks-found.log"
+
+# 初始化统计文件
+if [ ! -f "$STATS_FILE" ]; then
+    cat > "$STATS_FILE" << 'STATS_EOF'
+{
+  "start_time": "PLACEHOLDER_TIME",
+  "blocks_found": 0,
+  "last_block_time": "",
+  "last_block_hash": "",
+  "local_height": 0,
+  "network_height": 0,
+  "last_update": ""
+}
+STATS_EOF
+    sed -i "s/PLACEHOLDER_TIME/$(date '+%Y-%m-%d %H:%M:%S')/g" "$STATS_FILE"
+fi
+
+# 创建爆块日志文件
+touch "$BLOCKS_FOUND_FILE"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') - 区块监控已启动" >> "$SCRIPT_DIR/monitor.log"
+
+while true; do
+    sleep 60  # 每分钟检查一次
+
+    # 查找日志文件
+    LOG_FILE=""
+    if [ -f "$SCRIPT_DIR/miner.log" ]; then
+        LOG_FILE="$SCRIPT_DIR/miner.log"
+    elif [ -f "$SCRIPT_DIR/miner1.log" ]; then
+        LOG_FILE="$SCRIPT_DIR/miner1.log"
+    fi
+
+    if [ -z "$LOG_FILE" ]; then
+        continue
+    fi
+
+    # 提取本地区块高度
+    LOCAL_HEIGHT=""
+    tip_block=$(tail -500 "$LOG_FILE" | grep -E "tip=0x.*h=[0-9]+" | tail -1)
+    if [ -n "$tip_block" ]; then
+        LOCAL_HEIGHT=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+    fi
+
+    # 如果找不到，尝试其他格式
+    if [ -z "$LOCAL_HEIGHT" ]; then
+        LOCAL_HEIGHT=$(tail -500 "$LOG_FILE" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | tail -1)
+    fi
+
+    # 获取全网高度（通过 RPC）
+    NETWORK_HEIGHT=""
+    if command -v curl &> /dev/null; then
+        RPC_RESPONSE=$(curl -s -X POST http://localhost:8789 \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"cs_getBlockNumber","params":[],"id":1}' 2>/dev/null)
+
+        if [ -n "$RPC_RESPONSE" ]; then
+            # 提取十六进制结果并转换为十进制
+            HEX_HEIGHT=$(echo "$RPC_RESPONSE" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
+            if [ -n "$HEX_HEIGHT" ]; then
+                NETWORK_HEIGHT=$((HEX_HEIGHT))
+            fi
+        fi
+    fi
+
+    # 检查是否爆块（检测到 mined 或 sealed block 等关键词）
+    NEW_BLOCKS=$(tail -100 "$LOG_FILE" | grep -iE "mined block|sealed block|found block|block mined" || true)
+
+    if [ -n "$NEW_BLOCKS" ]; then
+        # 提取新爆块信息
+        while IFS= read -r line; do
+            BLOCK_HASH=$(echo "$line" | grep -oE "0x[0-9a-fA-F]{64}" | head -1)
+            BLOCK_HEIGHT=$(echo "$line" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" || echo "$line" | grep -oE "height=[0-9]+" | grep -oE "[0-9]+" || echo "unknown")
+
+            # 检查是否已记录过这个区块
+            if [ -n "$BLOCK_HASH" ] && ! grep -q "$BLOCK_HASH" "$BLOCKS_FOUND_FILE" 2>/dev/null; then
+                TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+                echo "$TIMESTAMP | 高度: $BLOCK_HEIGHT | 哈希: $BLOCK_HASH" >> "$BLOCKS_FOUND_FILE"
+
+                # 更新统计
+                BLOCKS_COUNT=$(wc -l < "$BLOCKS_FOUND_FILE")
+                sed -i "s/\"blocks_found\": [0-9]*/\"blocks_found\": $BLOCKS_COUNT/g" "$STATS_FILE"
+                sed -i "s/\"last_block_time\": \".*\"/\"last_block_time\": \"$TIMESTAMP\"/g" "$STATS_FILE"
+                sed -i "s/\"last_block_hash\": \".*\"/\"last_block_hash\": \"$BLOCK_HASH\"/g" "$STATS_FILE"
+            fi
+        done <<< "$NEW_BLOCKS"
+    fi
+
+    # 更新统计文件
+    CURRENT_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+    if [ -n "$LOCAL_HEIGHT" ]; then
+        sed -i "s/\"local_height\": [0-9]*/\"local_height\": $LOCAL_HEIGHT/g" "$STATS_FILE"
+    fi
+    if [ -n "$NETWORK_HEIGHT" ]; then
+        sed -i "s/\"network_height\": [0-9]*/\"network_height\": $NETWORK_HEIGHT/g" "$STATS_FILE"
+    fi
+    sed -i "s/\"last_update\": \".*\"/\"last_update\": \"$CURRENT_TIME\"/g" "$STATS_FILE"
+
+    # 在日志中输出信息
+    if [ -n "$LOCAL_HEIGHT" ] && [ -n "$NETWORK_HEIGHT" ]; then
+        SYNC_DIFF=$((NETWORK_HEIGHT - LOCAL_HEIGHT))
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - 本地高度: $LOCAL_HEIGHT | 全网高度: $NETWORK_HEIGHT | 差距: $SYNC_DIFF 区块" >> "$SCRIPT_DIR/monitor.log"
+    fi
+done
+EOF
+
+chmod +x block-monitor.sh
 
 # 创建日志清理脚本
 cat > log-cleaner.sh << 'EOF'

@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.5.0"
+MENU_VERSION="v1.6.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -61,9 +61,10 @@ show_menu() {
     echo "5. 查看实时日志 (Ctrl+C 退出)"
     echo "6. 查看最近日志 (最后50行)"
     echo "7. 查看运行状态"
-    echo "8. 重启挖矿"
-    echo "9. 卸载程序"
+    echo "8. 查看爆块统计"
+    echo "9. 重启挖矿"
     echo "u. 更新菜单脚本"
+    echo "x. 卸载程序"
     echo "0. 退出"
     echo ""
     echo -n "请选择: "
@@ -363,6 +364,13 @@ view_status() {
     else
         echo -e "日志清理: ${YELLOW}未运行${NC}"
     fi
+
+    # 检查区块监控进程
+    if pgrep -f "block-monitor.sh" > /dev/null; then
+        echo -e "区块监控: ${GREEN}运行中${NC}"
+    else
+        echo -e "区块监控: ${YELLOW}未运行${NC}"
+    fi
     echo ""
 
     # 从日志中提取网络和同步信息
@@ -404,7 +412,21 @@ view_status() {
         fi
 
         if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
-            echo -e "当前区块: ${GREEN}#$block_num${NC}"
+            echo -e "本地区块: ${GREEN}#$block_num${NC}"
+
+            # 从统计文件读取全网高度
+            if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
+                local network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+                if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
+                    echo -e "全网高度: ${GREEN}#$network_height${NC}"
+                    local sync_diff=$((network_height - block_num))
+                    if [ "$sync_diff" -le 10 ]; then
+                        echo -e "同步差距: ${GREEN}$sync_diff 个区块${NC} (已同步)"
+                    else
+                        echo -e "同步差距: ${YELLOW}$sync_diff 个区块${NC} (同步中)"
+                    fi
+                fi
+            fi
 
             # 显示区块工作量（如果有）
             if [ -n "$tip_block" ]; then
@@ -470,6 +492,116 @@ view_status() {
     echo ""
     echo "数据目录:"
     du -sh "$INSTALL_DIR"/cs*.db 2>/dev/null | awk '{printf "  %s  (%s)\n", $2, $1}' || echo "  无数据目录"
+
+    echo ""
+    echo -e "${BLUE}==========================================${NC}"
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 查看爆块统计
+view_blocks_stats() {
+    echo ""
+    echo -e "${BLUE}=========================================="
+    echo "         爆块统计"
+    echo -e "==========================================${NC}"
+
+    if ! check_installation; then
+        echo -e "${YELLOW}程序未安装${NC}"
+        echo ""
+        echo "按任意键返回菜单..."
+        read -n 1
+        return
+    fi
+
+    # 统计文件路径
+    STATS_FILE="$INSTALL_DIR/mining-stats.txt"
+    BLOCKS_FILE="$INSTALL_DIR/blocks-found.log"
+
+    if [ ! -f "$STATS_FILE" ]; then
+        echo -e "${YELLOW}未找到统计数据${NC}"
+        echo "区块监控程序可能未启动或刚启动不久"
+        echo ""
+        echo "按任意键返回菜单..."
+        read -n 1
+        return
+    fi
+
+    echo -e "${GREEN}[挖矿统计]${NC}"
+
+    # 提取统计信息
+    start_time=$(grep -oE '"start_time": "[^"]*"' "$STATS_FILE" | cut -d'"' -f4)
+    blocks_found=$(grep -oE '"blocks_found": [0-9]+' "$STATS_FILE" | grep -oE '[0-9]+')
+    last_block_time=$(grep -oE '"last_block_time": "[^"]*"' "$STATS_FILE" | cut -d'"' -f4)
+    last_block_hash=$(grep -oE '"last_block_hash": "[^"]*"' "$STATS_FILE" | cut -d'"' -f4)
+    local_height=$(grep -oE '"local_height": [0-9]+' "$STATS_FILE" | grep -oE '[0-9]+')
+    network_height=$(grep -oE '"network_height": [0-9]+' "$STATS_FILE" | grep -oE '[0-9]+')
+    last_update=$(grep -oE '"last_update": "[^"]*"' "$STATS_FILE" | cut -d'"' -f4)
+
+    echo "开始时间: $start_time"
+    echo "最后更新: $last_update"
+    echo ""
+
+    echo -e "${GREEN}[区块高度]${NC}"
+    if [ -n "$local_height" ] && [ "$local_height" -gt 0 ] 2>/dev/null; then
+        echo "本地高度: #$local_height"
+    else
+        echo "本地高度: 未同步"
+    fi
+
+    if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
+        echo "全网高度: #$network_height"
+
+        if [ -n "$local_height" ] && [ "$local_height" -gt 0 ] 2>/dev/null; then
+            sync_diff=$((network_height - local_height))
+            sync_percent=$((local_height * 100 / network_height))
+            if [ "$sync_diff" -le 10 ]; then
+                echo -e "同步进度: ${GREEN}${sync_percent}%${NC} (已同步，差距 $sync_diff 区块)"
+            else
+                echo -e "同步进度: ${YELLOW}${sync_percent}%${NC} (同步中，差距 $sync_diff 区块)"
+            fi
+        fi
+    else
+        echo "全网高度: 检测中..."
+    fi
+    echo ""
+
+    echo -e "${GREEN}[爆块记录]${NC}"
+    if [ -n "$blocks_found" ] && [ "$blocks_found" -gt 0 ] 2>/dev/null; then
+        echo -e "累计爆块: ${GREEN}$blocks_found 个${NC}"
+
+        if [ -n "$last_block_time" ]; then
+            echo "最后爆块: $last_block_time"
+        fi
+        if [ -n "$last_block_hash" ]; then
+            echo "区块哈希: ${last_block_hash:0:20}...${last_block_hash: -20}"
+        fi
+
+        # 计算运行时间和爆块率
+        if [ -n "$start_time" ]; then
+            start_epoch=$(date -d "$start_time" +%s 2>/dev/null || date +%s)
+            now_epoch=$(date +%s)
+            run_hours=$(( (now_epoch - start_epoch) / 3600 ))
+
+            if [ "$run_hours" -gt 0 ]; then
+                blocks_per_hour=$(echo "scale=2; $blocks_found / $run_hours" | bc 2>/dev/null || echo "0")
+                echo "运行时长: ${run_hours} 小时"
+                echo "爆块速率: ${blocks_per_hour} 块/小时"
+            fi
+        fi
+
+        echo ""
+        echo -e "${GREEN}[爆块详情]${NC}"
+        if [ -f "$BLOCKS_FILE" ] && [ -s "$BLOCKS_FILE" ]; then
+            echo "最近10个爆块："
+            tail -10 "$BLOCKS_FILE" | nl -w2 -s'. '
+        else
+            echo "暂无爆块记录"
+        fi
+    else
+        echo -e "${YELLOW}暂无爆块${NC}"
+        echo "继续运行，耐心等待..."
+    fi
 
     echo ""
     echo -e "${BLUE}==========================================${NC}"
@@ -626,9 +758,10 @@ main() {
             5) view_logs ;;
             6) view_recent_logs ;;
             7) view_status ;;
-            8) restart_mining ;;
-            9) uninstall_program ;;
+            8) view_blocks_stats ;;
+            9) restart_mining ;;
             u|U) update_menu ;;
+            x|X) uninstall_program ;;
             0)
                 echo ""
                 echo -e "${GREEN}再见！${NC}"
