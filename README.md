@@ -176,6 +176,39 @@ tail -f ~/csd-solo-miner/miner.log
 cat ~/csd-solo-miner/blocks-found.log
 ```
 
+### 测试和诊断
+
+如果发现高度显示不正确，可以使用以下工具：
+
+**1. 使用诊断功能（推荐）**
+```bash
+# 在菜单中选择 "d. 诊断信息"
+# 会自动测试：
+# - 本地 RPC 接口
+# - 全网高度 API
+# - 日志格式分析
+# - 给出针对性建议
+```
+
+**2. 使用独立测试脚本**
+```bash
+cd ~/csd-solo-miner
+curl -O https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/test-api.sh
+chmod +x test-api.sh
+./test-api.sh
+```
+
+**3. 手动测试 API**
+```bash
+# 测试本地节点高度
+curl -X POST http://localhost:8789 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+
+# 测试全网高度
+curl https://cairn-substrate.com/blocks/tip/height
+```
+
 ## 常见问题
 
 ### 如何获取钱包地址？
