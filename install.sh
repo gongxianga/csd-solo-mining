@@ -111,6 +111,15 @@ nohup ./target/release/csd node \
   --bootnodes $BOOTNODES \
   > miner.log 2>&1 &
 
+# 启动日志清理脚本
+if [ -f "$SCRIPT_DIR/log-cleaner.sh" ]; then
+    # 检查是否已经在运行
+    if ! pgrep -f "log-cleaner.sh" > /dev/null; then
+        nohup bash "$SCRIPT_DIR/log-cleaner.sh" > /dev/null 2>&1 &
+        echo "日志清理程序已启动（每30分钟清理一次）"
+    fi
+fi
+
 echo "已在后台启动！"
 echo "查看日志: tail -f $SCRIPT_DIR/miner.log"
 echo "停止运行: $SCRIPT_DIR/stop-mining.sh"
@@ -178,6 +187,16 @@ for i in $(seq 1 $GPU_COUNT); do
 done
 
 echo ""
+
+# 启动日志清理脚本
+if [ -f "$SCRIPT_DIR/log-cleaner.sh" ]; then
+    # 检查是否已经在运行
+    if ! pgrep -f "log-cleaner.sh" > /dev/null; then
+        nohup bash "$SCRIPT_DIR/log-cleaner.sh" > /dev/null 2>&1 &
+        echo "日志清理程序已启动（每30分钟清理一次）"
+    fi
+fi
+
 echo "所有挖矿实例已启动！"
 echo "查看日志: tail -f $SCRIPT_DIR/miner1.log"
 echo "停止运行: $SCRIPT_DIR/stop-mining.sh"
@@ -209,10 +228,53 @@ if pgrep -f 'csd node' > /dev/null; then
 else
     echo "没有运行中的挖矿进程"
 fi
+
+# 停止日志清理进程
+if pgrep -f 'log-cleaner.sh' > /dev/null; then
+    echo "停止日志清理进程..."
+    pkill -f 'log-cleaner.sh'
+    echo "日志清理进程已停止"
+fi
 EOF
 
 chmod +x stop-mining.sh
 
+# 创建日志清理脚本
+cat > log-cleaner.sh << 'EOF'
+#!/bin/bash
+
+# 获取脚本所在目录
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+
+# 日志大小限制（MB）
+MAX_LOG_SIZE=100
+
+while true; do
+    # 等待30分钟
+    sleep 1800
+
+    # 检查并清理所有日志文件
+    for log_file in miner*.log; do
+        if [ -f "$log_file" ]; then
+            # 获取文件大小（MB）
+            file_size=$(du -m "$log_file" | cut -f1)
+
+            if [ "$file_size" -gt "$MAX_LOG_SIZE" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - 清理日志文件: $log_file (大小: ${file_size}MB)"
+
+                # 保留最后1000行，删除其余
+                tail -n 1000 "$log_file" > "${log_file}.tmp"
+                mv "${log_file}.tmp" "$log_file"
+
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - 清理完成"
+            fi
+        fi
+    done
+done
+EOF
+
+chmod +x log-cleaner.sh
 
 echo ""
 echo -e "${GREEN}=========================================="

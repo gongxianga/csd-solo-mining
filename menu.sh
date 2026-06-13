@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.4.0"
+MENU_VERSION="v1.5.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -356,6 +356,13 @@ view_status() {
     local process_count=$(pgrep -f "csd node" | wc -l)
     echo "运行实例数: $process_count"
     ps aux | grep "csd node" | grep -v grep | awk '{printf "  PID: %s | CPU: %s%% | MEM: %s%% | 运行时间: %s\n", $2, $3, $4, $10}'
+
+    # 检查日志清理进程
+    if pgrep -f "log-cleaner.sh" > /dev/null; then
+        echo -e "日志清理: ${GREEN}运行中${NC} (每30分钟清理一次)"
+    else
+        echo -e "日志清理: ${YELLOW}未运行${NC}"
+    fi
     echo ""
 
     # 从日志中提取网络和同步信息
