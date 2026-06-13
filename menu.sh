@@ -378,49 +378,69 @@ view_status() {
 
         # 从日志提取区块高度 - 多种模式匹配
         local block_num=""
+        local best_block_line=""
 
-        # 尝试匹配 "best block: #数字" 或 "imported block #数字"
-        block_num=$(tail -100 "$log_file" | grep -oE "(best block|imported block|block).*#[0-9]+" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
-
-        # 如果没找到，尝试其他模式
-        if [ -z "$block_num" ]; then
-            block_num=$(tail -100 "$log_file" | grep -oE "block [0-9]+" | grep -oE "[0-9]+" | tail -1)
-        fi
-
-        # 如果没找到，尝试十六进制区块哈希模式
-        if [ -z "$block_num" ]; then
-            block_num=$(tail -100 "$log_file" | grep -oE "0x[0-9a-f]{64}" | wc -l)
-            if [ "$block_num" -gt 0 ]; then
-                echo -e "区块同步: ${GREEN}活跃${NC} (最近处理 $block_num 个区块)"
-                block_num=""
+        # 模式1: "best: #数字" 或 "best block: #数字" 或 "best=#数字"
+        best_block_line=$(tail -200 "$log_file" | grep -iE "best" | tail -1)
+        if [ -n "$best_block_line" ]; then
+            block_num=$(echo "$best_block_line" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
+            if [ -z "$block_num" ]; then
+                block_num=$(echo "$best_block_line" | grep -oE "best[=:][[:space:]]*[0-9]+" | grep -oE "[0-9]+" | tail -1)
             fi
         fi
 
-        if [ -n "$block_num" ] && [ "$block_num" -gt 0 ]; then
-            echo -e "当前区块: ${GREEN}#$block_num${NC}"
+        # 模式2: "imported block #数字" 或 "import.*#数字"
+        if [ -z "$block_num" ]; then
+            block_num=$(tail -200 "$log_file" | grep -iE "import" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
         fi
 
-        # 提取连接的节点数 - 多种模式
-        local peer_info=$(tail -50 "$log_file" | grep -iE "peer|connect|node" | tail -3)
-        if [ -n "$peer_info" ]; then
-            # 尝试提取数字
-            local peer_count=$(echo "$peer_info" | grep -oE "[0-9]+ (peer|node)" | grep -oE "[0-9]+" | tail -1)
-            if [ -n "$peer_count" ]; then
+        # 模式3: "height: 数字" 或 "height=数字"
+        if [ -z "$block_num" ]; then
+            block_num=$(tail -200 "$log_file" | grep -iE "height" | grep -oE "(height[=:][[:space:]]*[0-9]+)" | grep -oE "[0-9]+" | tail -1)
+        fi
+
+        # 模式4: 日志时间戳后的数字 (可能是区块号)
+        if [ -z "$block_num" ]; then
+            block_num=$(tail -200 "$log_file" | grep -oE "\[[0-9]{4}-[0-9]{2}-[0-9]{2}.*\].*[[:space:]][0-9]{4,}" | grep -oE "[[:space:]][0-9]{4,}" | tail -1 | tr -d ' ')
+        fi
+
+        if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
+            echo -e "当前区块: ${GREEN}#$block_num${NC}"
+        else
+            # 如果找不到明确的区块号，显示正在同步中
+            local sync_count=$(tail -100 "$log_file" | grep -c "sync\|gossip\|request")
+            if [ "$sync_count" -gt 0 ]; then
+                echo -e "区块高度: ${YELLOW}同步中...${NC} (正在下载区块)"
+            else
+                echo -e "区块高度: ${YELLOW}未检测到${NC}"
+            fi
+        fi
+
+        # 提取连接的节点数
+        local peer_line=$(tail -100 "$log_file" | grep -iE "peer" | tail -1)
+        if [ -n "$peer_line" ]; then
+            local peer_count=$(echo "$peer_line" | grep -oE "[0-9]+" | head -1)
+            if [ -n "$peer_count" ] && [ "$peer_count" -gt 0 ] 2>/dev/null; then
                 echo "连接节点数: $peer_count"
             fi
         fi
 
         # 检查是否正在同步
-        local is_syncing=$(tail -20 "$log_file" | grep -i "sync")
-        if [ -n "$is_syncing" ]; then
+        local sync_line=$(tail -50 "$log_file" | grep -iE "sync|gossip|request" | tail -1)
+        if [ -n "$sync_line" ]; then
             echo -e "同步状态: ${YELLOW}同步中${NC}"
+            # 提取正在请求的对等节点
+            local peer_id=$(echo "$sync_line" | grep -oE "12D3[A-Za-z0-9]{50,}" | head -1)
+            if [ -n "$peer_id" ]; then
+                echo "正在从节点同步: ${peer_id:0:20}..."
+            fi
         else
             echo -e "同步状态: ${GREEN}已同步${NC}"
         fi
 
         echo ""
-        echo -e "${GREEN}[最近日志]${NC} (最后5行)"
-        tail -5 "$log_file" | sed 's/^/  /'
+        echo -e "${GREEN}[最近日志]${NC} (最后10行)"
+        tail -10 "$log_file" | sed 's/^/  /'
     else
         echo -e "${YELLOW}未找到日志文件，无法显示网络状态${NC}"
     fi
