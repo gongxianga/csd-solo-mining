@@ -362,7 +362,7 @@ while true; do
     # 方法1: 从官方 API 获取（最准确，最优先）
     if command -v curl &> /dev/null; then
         # 尝试从 Cairn 官方浏览器 API 获取
-        API_HEIGHT=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
+        API_HEIGHT=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
         if [ -n "$API_HEIGHT" ] && [ "$API_HEIGHT" -gt 0 ] 2>/dev/null; then
             NETWORK_HEIGHT=$API_HEIGHT
             echo "$(date '+%Y-%m-%d %H:%M:%S') - 全网高度获取成功 (API): $NETWORK_HEIGHT" >> "$SCRIPT_DIR/monitor.log"
@@ -370,7 +370,7 @@ while true; do
 
         # 备用：尝试 health 接口
         if [ -z "$NETWORK_HEIGHT" ] || [ "$NETWORK_HEIGHT" -eq 0 ] 2>/dev/null; then
-            API_HEALTH=$(curl -s -m 3 "https://cairn-substrate.com/health" 2>/dev/null)
+            API_HEALTH=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/health" 2>/dev/null)
             API_HEIGHT=$(echo "$API_HEALTH" | grep -oE '"indexed_height":[0-9]+' | grep -oE '[0-9]+')
             if [ -n "$API_HEIGHT" ] && [ "$API_HEIGHT" -gt 0 ] 2>/dev/null; then
                 NETWORK_HEIGHT=$API_HEIGHT

@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v2.0.0"
+MENU_VERSION="v2.1.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -444,7 +444,7 @@ view_status() {
 
             # 方法1: 直接从官方 API 获取（最准确，最优先）
             if command -v curl &> /dev/null; then
-                local api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
+                local api_height=$(curl -s -m 2 "https://cairn-substrate.com/explorer/api/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
                 if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
                     network_height=$api_height
                 fi
@@ -608,7 +608,7 @@ view_blocks_stats() {
 
     # 优先从 API 获取全网高度（最准确）
     if command -v curl &> /dev/null; then
-        api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
+        api_height=$(curl -s -m 2 "https://cairn-substrate.com/explorer/api/blocks/tip/height" 2>/dev/null | grep -oE '^[0-9]+$')
         if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
             # API 获取成功，使用 API 高度
             network_height=$api_height
@@ -786,7 +786,7 @@ diagnostic_info() {
         echo "测试官方 API (cairn-substrate.com)..."
 
         echo -n "  测试 /blocks/tip/height: "
-        api_result=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null)
+        api_result=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/blocks/tip/height" 2>/dev/null)
         if [ -n "$api_result" ]; then
             api_height=$(echo "$api_result" | grep -oE '^[0-9]+$')
             if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
@@ -799,7 +799,7 @@ diagnostic_info() {
         fi
 
         echo -n "  测试 /health: "
-        health_result=$(curl -s -m 3 "https://cairn-substrate.com/health" 2>/dev/null)
+        health_result=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/health" 2>/dev/null)
         if [ -n "$health_result" ]; then
             health_height=$(echo "$health_result" | grep -oE '"indexed_height":[0-9]+' | grep -oE '[0-9]+')
             if [ -n "$health_height" ] && [ "$health_height" -gt 0 ] 2>/dev/null; then

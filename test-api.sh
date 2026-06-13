@@ -32,8 +32,8 @@ done
 
 echo "[2] 测试全网高度 API"
 echo "------------------------------------"
-echo "API 端点: https://cairn-substrate.com/blocks/tip/height"
-result=$(curl -s -m 3 "https://cairn-substrate.com/blocks/tip/height")
+echo "API 端点: https://cairn-substrate.com/explorer/api/blocks/tip/height"
+result=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/blocks/tip/height")
 echo "响应: $result"
 if [ -n "$result" ]; then
     height=$(echo "$result" | grep -oE '^[0-9]+$')
@@ -47,8 +47,8 @@ else
 fi
 echo ""
 
-echo "API 端点: https://cairn-substrate.com/health"
-result=$(curl -s -m 3 "https://cairn-substrate.com/health")
+echo "API 端点: https://cairn-substrate.com/explorer/api/health"
+result=$(curl -s -m 3 "https://cairn-substrate.com/explorer/api/health")
 echo "响应: $(echo "$result" | head -c 200)..."
 if [ -n "$result" ]; then
     height=$(echo "$result" | grep -oE '"indexed_height":[0-9]+' | grep -oE '[0-9]+')

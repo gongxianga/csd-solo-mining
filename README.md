@@ -206,7 +206,7 @@ curl -X POST http://localhost:8789 \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 
 # 测试全网高度
-curl https://cairn-substrate.com/blocks/tip/height
+curl https://cairn-substrate.com/explorer/api/blocks/tip/height
 ```
 
 ## 常见问题
