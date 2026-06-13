@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.1.0"
+MENU_VERSION="v1.2.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -58,14 +58,15 @@ show_menu() {
     echo "2. 启动单显卡挖矿"
     echo "3. 启动多显卡挖矿"
     echo "4. 停止挖矿"
-    echo "5. 查看实时日志"
-    echo "6. 查看运行状态"
-    echo "7. 重启挖矿"
-    echo "8. 卸载程序"
-    echo "9. 更新菜单脚本"
+    echo "5. 查看实时日志 (Ctrl+C 退出)"
+    echo "6. 查看最近日志 (最后50行)"
+    echo "7. 查看运行状态"
+    echo "8. 重启挖矿"
+    echo "9. 卸载程序"
+    echo "u. 更新菜单脚本"
     echo "0. 退出"
     echo ""
-    echo -n "请选择 [0-9]: "
+    echo -n "请选择: "
 }
 
 # 安装程序
@@ -255,21 +256,73 @@ view_logs() {
         return
     fi
 
+    local log_file=""
+
     if [ -f "$INSTALL_DIR/miner.log" ]; then
-        echo -e "${GREEN}单显卡日志 (Ctrl+C 退出):${NC}"
-        echo "文件: $INSTALL_DIR/miner.log"
-        echo ""
-        tail -f "$INSTALL_DIR/miner.log"
+        log_file="$INSTALL_DIR/miner.log"
+        echo -e "${GREEN}单显卡日志${NC}"
     elif [ -f "$INSTALL_DIR/miner1.log" ]; then
-        echo -e "${GREEN}多显卡日志 - 显卡1 (Ctrl+C 退出):${NC}"
-        echo "文件: $INSTALL_DIR/miner1.log"
-        echo ""
-        tail -f "$INSTALL_DIR/miner1.log"
+        log_file="$INSTALL_DIR/miner1.log"
+        echo -e "${GREEN}多显卡日志 - 显卡1${NC}"
     else
         echo -e "${RED}未找到日志文件${NC}"
         echo "目录: $INSTALL_DIR"
         sleep 2
+        return
     fi
+
+    echo "文件: $log_file"
+    echo ""
+    echo -e "${YELLOW}===========================================${NC}"
+    echo -e "${YELLOW}提示：按 Ctrl+C 可以退出日志查看${NC}"
+    echo -e "${YELLOW}===========================================${NC}"
+    echo ""
+    sleep 1
+
+    # 使用 trap 捕获 Ctrl+C，避免退出整个脚本
+    (
+        trap 'echo -e "\n${GREEN}退出日志查看...${NC}"; exit 0' INT
+        tail -f "$log_file"
+    )
+
+    echo ""
+    echo "按任意键返回菜单..."
+    read -n 1
+}
+
+# 查看最近日志
+view_recent_logs() {
+    echo ""
+
+    if ! check_installation; then
+        echo -e "${RED}错误: 尚未安装${NC}"
+        sleep 2
+        return
+    fi
+
+    local log_file=""
+
+    if [ -f "$INSTALL_DIR/miner.log" ]; then
+        log_file="$INSTALL_DIR/miner.log"
+        echo -e "${GREEN}========== 单显卡日志（最后50行）==========${NC}"
+    elif [ -f "$INSTALL_DIR/miner1.log" ]; then
+        log_file="$INSTALL_DIR/miner1.log"
+        echo -e "${GREEN}========== 多显卡日志 - 显卡1（最后50行）==========${NC}"
+    else
+        echo -e "${RED}未找到日志文件${NC}"
+        echo "目录: $INSTALL_DIR"
+        sleep 2
+        return
+    fi
+
+    echo "文件: $log_file"
+    echo ""
+
+    tail -n 50 "$log_file"
+
+    echo ""
+    echo "按任意键返回菜单..."
+    read -n 1
 }
 
 # 查看状态
@@ -453,10 +506,11 @@ main() {
             3) start_multi ;;
             4) stop_mining ;;
             5) view_logs ;;
-            6) view_status ;;
-            7) restart_mining ;;
-            8) uninstall_program ;;
-            9) update_menu ;;
+            6) view_recent_logs ;;
+            7) view_status ;;
+            8) restart_mining ;;
+            9) uninstall_program ;;
+            u|U) update_menu ;;
             0)
                 echo ""
                 echo -e "${GREEN}再见！${NC}"
