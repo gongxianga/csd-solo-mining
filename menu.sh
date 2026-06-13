@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.7.0"
+MENU_VERSION="v1.8.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -415,15 +415,26 @@ view_status() {
         if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
             echo -e "本地区块: ${GREEN}#$block_num${NC}"
 
-            # 从统计文件读取全网高度
+            # 获取全网高度
             local network_height=""
+
+            # 方法1: 从统计文件读取（如果监控程序在运行）
             if [ -f "$INSTALL_DIR/mining-stats.txt" ]; then
                 network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
             fi
 
-            # 如果统计文件没有全网高度，尝试从日志中直接提取
+            # 方法2: 直接从官方 API 获取（最准确）
             if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
-                # 从日志中提取其他节点请求的最高区块号
+                if command -v curl &> /dev/null; then
+                    local api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '[0-9]+')
+                    if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
+                        network_height=$api_height
+                    fi
+                fi
+            fi
+
+            # 方法3: 从日志中直接提取
+            if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
                 local request_heights=$(tail -1000 "$log_file" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | sort -n | tail -1)
                 if [ -n "$request_heights" ] && [ "$request_heights" -gt 0 ] 2>/dev/null; then
                     network_height=$request_heights
@@ -572,6 +583,16 @@ view_blocks_stats() {
         echo "本地高度: 未同步"
     fi
 
+    # 如果统计文件中没有全网高度，尝试从 API 获取
+    if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
+        if command -v curl &> /dev/null; then
+            api_height=$(curl -s -m 2 "https://cairn-substrate.com/blocks/tip/height" 2>/dev/null | grep -oE '[0-9]+')
+            if [ -n "$api_height" ] && [ "$api_height" -gt 0 ] 2>/dev/null; then
+                network_height=$api_height
+            fi
+        fi
+    fi
+
     if [ -n "$network_height" ] && [ "$network_height" -gt 0 ] 2>/dev/null; then
         echo "全网高度: #$network_height"
 
@@ -585,7 +606,8 @@ view_blocks_stats() {
             fi
         fi
     else
-        echo "全网高度: 检测中..."
+        echo -e "全网高度: ${YELLOW}检测中...${NC}"
+        echo "提示: 正在从官方 API 获取数据"
     fi
     echo ""
 
