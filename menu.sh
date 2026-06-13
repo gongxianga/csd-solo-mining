@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.8.0"
+MENU_VERSION="v1.9.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -392,24 +392,48 @@ view_status() {
             echo -e "RPC 端口: ${YELLOW}检测中...${NC}"
         fi
 
-        # 从日志提取区块高度 - CSD 特定格式
+        # 获取本地区块高度
         local block_num=""
-        local tip_block=""
 
-        # 模式1: "h=数字" 格式（tip 区块高度）
-        tip_block=$(tail -200 "$log_file" | grep -E "tip=0x.*h=[0-9]+" | tail -1)
-        if [ -n "$tip_block" ]; then
-            block_num=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+        # 方法1: 通过本地 RPC 接口获取（最准确）
+        if command -v curl &> /dev/null; then
+            for method in "eth_blockNumber" "cs_blockNumber" "substrate_blockNumber"; do
+                local rpc_response=$(curl -s -m 1 -X POST http://localhost:8789 \
+                    -H "Content-Type: application/json" \
+                    -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":[],\"id\":1}" 2>/dev/null)
+
+                if [ -n "$rpc_response" ] && echo "$rpc_response" | grep -q "result"; then
+                    local hex_height=$(echo "$rpc_response" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
+                    if [ -n "$hex_height" ]; then
+                        block_num=$((hex_height))
+                        break
+                    fi
+                fi
+            done
         fi
 
-        # 模式2: "(height=数字)" 格式（正在请求的区块）
-        if [ -z "$block_num" ]; then
-            block_num=$(tail -200 "$log_file" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | tail -1)
+        # 方法2: 从日志提取 [tip] 行
+        if [ -z "$block_num" ] || [ "$block_num" -eq 0 ] 2>/dev/null; then
+            local tip_line=$(tail -500 "$log_file" | grep -E "\[tip\].*h=[0-9]+" | tail -1)
+            if [ -n "$tip_line" ]; then
+                block_num=$(echo "$tip_line" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+            fi
         fi
 
-        # 模式3: "height=数字" 格式
-        if [ -z "$block_num" ]; then
-            block_num=$(tail -200 "$log_file" | grep -oE "height=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+        # 方法3: 从 tip= 格式提取
+        if [ -z "$block_num" ] || [ "$block_num" -eq 0 ] 2>/dev/null; then
+            local tip_block=$(tail -500 "$log_file" | grep -E "tip=0x[0-9a-fA-F]+.*h=[0-9]+" | tail -1)
+            if [ -n "$tip_block" ]; then
+                block_num=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+            fi
+        fi
+
+        # 方法4: 从 now tip= 提取
+        if [ -z "$block_num" ] || [ "$block_num" -eq 0 ] 2>/dev/null; then
+            local now_tip=$(tail -500 "$log_file" | grep "now tip=" | tail -1)
+            if [ -n "$now_tip" ]; then
+                block_num=$(echo "$now_tip" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+            fi
         fi
 
         if [ -n "$block_num" ] && [ "$block_num" -gt 0 ] 2>/dev/null; then
@@ -706,6 +730,38 @@ diagnostic_info() {
     fi
     echo ""
 
+    echo -e "${GREEN}[RPC 接口测试]${NC}"
+    if command -v curl &> /dev/null; then
+        echo "测试本地 RPC (localhost:8789)..."
+
+        # 测试多个方法
+        for method in "eth_blockNumber" "cs_blockNumber" "substrate_blockNumber"; do
+            echo -n "  测试 $method: "
+            rpc_result=$(curl -s -m 1 -X POST http://localhost:8789 \
+                -H "Content-Type: application/json" \
+                -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":[],\"id\":1}" 2>/dev/null)
+
+            if [ -n "$rpc_result" ]; then
+                if echo "$rpc_result" | grep -q "result"; then
+                    hex_val=$(echo "$rpc_result" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
+                    if [ -n "$hex_val" ]; then
+                        dec_val=$((hex_val))
+                        echo -e "${GREEN}成功 (高度: $dec_val)${NC}"
+                    else
+                        echo -e "${YELLOW}返回但无高度数据${NC}"
+                    fi
+                else
+                    echo -e "${RED}失败: $(echo "$rpc_result" | head -c 50)${NC}"
+                fi
+            else
+                echo -e "${RED}无响应${NC}"
+            fi
+        done
+    else
+        echo -e "${RED}curl 未安装${NC}"
+    fi
+    echo ""
+
     echo -e "${GREEN}[日志分析]${NC}"
     local log_file=""
     if [ -f "$INSTALL_DIR/miner.log" ]; then
@@ -716,44 +772,76 @@ diagnostic_info() {
 
     if [ -n "$log_file" ]; then
         echo "日志文件: $log_file"
+        echo "文件大小: $(du -h "$log_file" | cut -f1)"
 
         # 检查日志中是否有区块高度信息
-        local tip_count=$(tail -500 "$log_file" | grep -c "tip=")
+        local tip_count=$(tail -500 "$log_file" | grep -c "\[tip\]")
+        local tip_eq_count=$(tail -500 "$log_file" | grep -c "tip=")
         local height_count=$(tail -500 "$log_file" | grep -c "height=")
         local sync_count=$(tail -500 "$log_file" | grep -c "\[sync\]")
 
+        echo ""
         echo "最近500行日志统计:"
-        echo "  - 包含 'tip=' 的行: $tip_count"
+        echo "  - 包含 '[tip]' 的行: $tip_count"
+        echo "  - 包含 'tip=' 的行: $tip_eq_count"
         echo "  - 包含 'height=' 的行: $height_count"
         echo "  - 包含 '[sync]' 的行: $sync_count"
 
         # 提取一些示例行
         echo ""
-        echo "最近的 tip 记录:"
-        tail -500 "$log_file" | grep "tip=" | tail -3 | sed 's/^/  /'
+        echo "最近的 [tip] 记录:"
+        tail -500 "$log_file" | grep "\[tip\]" | tail -3 | sed 's/^/  /' || echo "  (无)"
 
         echo ""
-        echo "最近的 height 记录:"
-        tail -500 "$log_file" | grep "height=" | tail -3 | sed 's/^/  /'
+        echo "最近的 tip= 记录:"
+        tail -500 "$log_file" | grep "tip=" | tail -3 | sed 's/^/  /' || echo "  (无)"
+
+        echo ""
+        echo "最近的 now tip= 记录:"
+        tail -500 "$log_file" | grep "now tip=" | tail -3 | sed 's/^/  /' || echo "  (无)"
     else
         echo -e "${RED}未找到日志文件${NC}"
     fi
 
     echo ""
     echo -e "${GREEN}[建议]${NC}"
-    if ! pgrep -f "block-monitor.sh" > /dev/null; then
+
+    # 检查本地高度获取
+    local can_get_local=false
+    if [ -n "$log_file" ]; then
+        local test_tip=$(tail -500 "$log_file" | grep -E "\[tip\]|tip=|now tip=" | head -1)
+        if [ -n "$test_tip" ]; then
+            can_get_local=true
+        fi
+    fi
+
+    if ! pgrep -f "csd node" > /dev/null; then
+        echo -e "${YELLOW}挖矿进程未运行，请先启动挖矿${NC}"
+    elif [ "$can_get_local" = false ]; then
+        echo -e "${YELLOW}日志中无法找到本地高度信息，可能原因：${NC}"
+        echo "  1. 节点刚启动，还未生成 tip 日志"
+        echo "  2. 日志格式已更改"
+        echo "  3. 建议：等待2-3分钟后重新查看"
+        echo "  4. 或尝试：tail -f $log_file | grep tip"
+    elif ! pgrep -f "block-monitor.sh" > /dev/null; then
         echo -e "${YELLOW}监控进程未运行，请尝试重启挖矿以启动监控${NC}"
     elif [ ! -f "$INSTALL_DIR/mining-stats.txt" ]; then
         echo -e "${YELLOW}统计文件不存在，监控程序可能刚启动，请等待1-2分钟${NC}"
     else
-        local network_height=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
-        if [ -z "$network_height" ] || [ "$network_height" -eq 0 ] 2>/dev/null; then
-            echo -e "${YELLOW}全网高度为0或未获取，可能原因：${NC}"
-            echo "  1. 节点正在同步中，还未收到其他节点的区块信息"
-            echo "  2. 监控程序刚启动，等待1-2分钟后再查看"
-            echo "  3. 日志中缺少区块高度信息"
+        local local_h=$(grep -oE '"local_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+        local network_h=$(grep -oE '"network_height": [0-9]+' "$INSTALL_DIR/mining-stats.txt" | grep -oE '[0-9]+')
+
+        if [ -z "$local_h" ] || [ "$local_h" -eq 0 ] 2>/dev/null; then
+            echo -e "${YELLOW}本地高度为0或未获取，建议：${NC}"
+            echo "  1. 检查上方 RPC 测试结果"
+            echo "  2. 查看日志示例中是否有 h= 数字"
+            echo "  3. 等待节点完成初始化（2-5分钟）"
+        elif [ -z "$network_h" ] || [ "$network_h" -eq 0 ] 2>/dev/null; then
+            echo -e "${YELLOW}全网高度未获取，但本地高度正常: $local_h${NC}"
+            echo "  提示: 全网高度通过官方 API 获取，可能网络暂时不可达"
         else
-            echo -e "${GREEN}监控运行正常，全网高度: $network_height${NC}"
+            echo -e "${GREEN}监控运行正常${NC}"
+            echo "  本地高度: $local_h | 全网高度: $network_h"
         fi
     fi
 

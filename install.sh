@@ -310,16 +310,50 @@ while true; do
         continue
     fi
 
-    # 提取本地区块高度（本地 tip 高度）
+    # 提取本地区块高度
     LOCAL_HEIGHT=""
-    tip_block=$(tail -500 "$LOG_FILE" | grep -E "tip=0x.*h=[0-9]+" | tail -1)
-    if [ -n "$tip_block" ]; then
-        LOCAL_HEIGHT=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+
+    # 方法1: 通过本地 RPC 接口获取（最准确）
+    if command -v curl &> /dev/null; then
+        # 尝试多个可能的 RPC 方法
+        for method in "eth_blockNumber" "cs_blockNumber" "substrate_blockNumber"; do
+            RPC_RESPONSE=$(curl -s -m 2 -X POST http://localhost:8789 \
+                -H "Content-Type: application/json" \
+                -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":[],\"id\":1}" 2>/dev/null)
+
+            if [ -n "$RPC_RESPONSE" ] && echo "$RPC_RESPONSE" | grep -q "result"; then
+                HEX_HEIGHT=$(echo "$RPC_RESPONSE" | grep -oE '"result":"0x[0-9a-fA-F]+"' | grep -oE '0x[0-9a-fA-F]+')
+                if [ -n "$HEX_HEIGHT" ]; then
+                    LOCAL_HEIGHT=$((HEX_HEIGHT))
+                    break
+                fi
+            fi
+        done
     fi
 
-    # 如果找不到，尝试其他格式
-    if [ -z "$LOCAL_HEIGHT" ]; then
-        LOCAL_HEIGHT=$(tail -500 "$LOG_FILE" | grep -oE "\(height=[0-9]+\)" | grep -oE "[0-9]+" | tail -1)
+    # 方法2: 从日志提取 tip 高度
+    if [ -z "$LOCAL_HEIGHT" ] || [ "$LOCAL_HEIGHT" -eq 0 ] 2>/dev/null; then
+        # 模式1: [tip] set_tip ... h=数字
+        tip_block=$(tail -500 "$LOG_FILE" | grep -E "\[tip\].*h=[0-9]+" | tail -1)
+        if [ -n "$tip_block" ]; then
+            LOCAL_HEIGHT=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+        fi
+    fi
+
+    # 方法3: 从 tip= 格式提取
+    if [ -z "$LOCAL_HEIGHT" ] || [ "$LOCAL_HEIGHT" -eq 0 ] 2>/dev/null; then
+        tip_block=$(tail -500 "$LOG_FILE" | grep -E "tip=0x[0-9a-fA-F]+.*h=[0-9]+" | tail -1)
+        if [ -n "$tip_block" ]; then
+            LOCAL_HEIGHT=$(echo "$tip_block" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+        fi
+    fi
+
+    # 方法4: 从 now tip= 格式提取
+    if [ -z "$LOCAL_HEIGHT" ] || [ "$LOCAL_HEIGHT" -eq 0 ] 2>/dev/null; then
+        tip_line=$(tail -500 "$LOG_FILE" | grep "now tip=" | tail -1)
+        if [ -n "$tip_line" ]; then
+            LOCAL_HEIGHT=$(echo "$tip_line" | grep -oE "h=[0-9]+" | grep -oE "[0-9]+" | tail -1)
+        fi
     fi
 
     # 获取全网高度
