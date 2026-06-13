@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.2.0"
+MENU_VERSION="v1.3.0"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -328,7 +328,9 @@ view_recent_logs() {
 # 查看状态
 view_status() {
     echo ""
-    echo -e "${BLUE}========== 运行状态 ==========${NC}"
+    echo -e "${BLUE}=========================================="
+    echo "         运行状态监控"
+    echo -e "==========================================${NC}"
 
     if ! check_installation; then
         echo -e "${YELLOW}程序未安装${NC}"
@@ -338,23 +340,80 @@ view_status() {
         return
     fi
 
+    echo -e "${GREEN}[安装信息]${NC}"
     echo "安装目录: $INSTALL_DIR"
     echo ""
 
-    if pgrep -f "csd node" > /dev/null; then
-        echo "进程列表:"
-        ps aux | grep "csd node" | grep -v grep
-        echo ""
-        echo "日志文件:"
-        ls -lh "$INSTALL_DIR"/*.log 2>/dev/null || echo "  无日志文件"
-        echo ""
-        echo "数据目录:"
-        ls -lhd "$INSTALL_DIR"/cs*.db 2>/dev/null || echo "  无数据目录"
-    else
+    if ! pgrep -f "csd node" > /dev/null; then
         echo -e "${YELLOW}当前没有运行中的挖矿进程${NC}"
+        echo ""
+        echo "按任意键返回菜单..."
+        read -n 1
+        return
+    fi
+
+    echo -e "${GREEN}[进程信息]${NC}"
+    local process_count=$(pgrep -f "csd node" | wc -l)
+    echo "运行实例数: $process_count"
+    ps aux | grep "csd node" | grep -v grep | awk '{printf "  PID: %s | CPU: %s%% | MEM: %s%% | 运行时间: %s\n", $2, $3, $4, $10}'
+    echo ""
+
+    echo -e "${GREEN}[网络状态]${NC}"
+    # 检查 RPC 端口
+    if command -v curl &> /dev/null; then
+        # 尝试获取区块信息
+        local rpc_response=$(curl -s --max-time 2 -X POST http://127.0.0.1:8789 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>/dev/null)
+
+        if [ -n "$rpc_response" ] && echo "$rpc_response" | grep -q "result"; then
+            echo -e "RPC 端口: ${GREEN}正常 (8789)${NC}"
+
+            # 解析区块高度（十六进制转十进制）
+            local block_hex=$(echo "$rpc_response" | grep -o '"result":"0x[^"]*"' | cut -d'"' -f4)
+            if [ -n "$block_hex" ]; then
+                local block_num=$((16#${block_hex#0x}))
+                echo -e "当前区块: ${GREEN}#$block_num${NC}"
+            fi
+        else
+            echo -e "RPC 端口: ${YELLOW}检测中...${NC}"
+        fi
+    fi
+
+    # 从日志中提取网络信息
+    local log_file=""
+    if [ -f "$INSTALL_DIR/miner.log" ]; then
+        log_file="$INSTALL_DIR/miner.log"
+    elif [ -f "$INSTALL_DIR/miner1.log" ]; then
+        log_file="$INSTALL_DIR/miner1.log"
+    fi
+
+    if [ -n "$log_file" ]; then
+        # 提取连接的节点数
+        local peer_count=$(grep -o "peers=[0-9]*" "$log_file" 2>/dev/null | tail -1 | grep -o "[0-9]*")
+        if [ -n "$peer_count" ]; then
+            echo "连接节点数: $peer_count"
+        fi
+
+        # 检查同步状态
+        local sync_status=$(tail -20 "$log_file" | grep -i "sync\|import\|best block" | tail -3)
+        if [ -n "$sync_status" ]; then
+            echo ""
+            echo -e "${GREEN}[同步状态]${NC}"
+            echo "$sync_status" | while read line; do
+                echo "  $line"
+            done
+        fi
     fi
 
     echo ""
+    echo -e "${GREEN}[存储信息]${NC}"
+    echo "日志文件:"
+    ls -lh "$INSTALL_DIR"/*.log 2>/dev/null | awk '{printf "  %s  %s\n", $9, $5}' || echo "  无日志文件"
+    echo ""
+    echo "数据目录:"
+    du -sh "$INSTALL_DIR"/cs*.db 2>/dev/null | awk '{printf "  %s  (%s)\n", $2, $1}' || echo "  无数据目录"
+
+    echo ""
+    echo -e "${BLUE}==========================================${NC}"
     echo "按任意键返回菜单..."
     read -n 1
 }
