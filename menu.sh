@@ -4,7 +4,7 @@
 # 一键下载运行: curl -fsSL https://raw.githubusercontent.com/gongxianga/csd-solo-mining/main/menu.sh -o menu.sh && chmod +x menu.sh && ./menu.sh
 
 # 版本号
-MENU_VERSION="v1.3.0"
+MENU_VERSION="v1.3.1"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -358,27 +358,7 @@ view_status() {
     ps aux | grep "csd node" | grep -v grep | awk '{printf "  PID: %s | CPU: %s%% | MEM: %s%% | 运行时间: %s\n", $2, $3, $4, $10}'
     echo ""
 
-    echo -e "${GREEN}[网络状态]${NC}"
-    # 检查 RPC 端口
-    if command -v curl &> /dev/null; then
-        # 尝试获取区块信息
-        local rpc_response=$(curl -s --max-time 2 -X POST http://127.0.0.1:8789 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>/dev/null)
-
-        if [ -n "$rpc_response" ] && echo "$rpc_response" | grep -q "result"; then
-            echo -e "RPC 端口: ${GREEN}正常 (8789)${NC}"
-
-            # 解析区块高度（十六进制转十进制）
-            local block_hex=$(echo "$rpc_response" | grep -o '"result":"0x[^"]*"' | cut -d'"' -f4)
-            if [ -n "$block_hex" ]; then
-                local block_num=$((16#${block_hex#0x}))
-                echo -e "当前区块: ${GREEN}#$block_num${NC}"
-            fi
-        else
-            echo -e "RPC 端口: ${YELLOW}检测中...${NC}"
-        fi
-    fi
-
-    # 从日志中提取网络信息
+    # 从日志中提取网络和同步信息
     local log_file=""
     if [ -f "$INSTALL_DIR/miner.log" ]; then
         log_file="$INSTALL_DIR/miner.log"
@@ -387,21 +367,62 @@ view_status() {
     fi
 
     if [ -n "$log_file" ]; then
-        # 提取连接的节点数
-        local peer_count=$(grep -o "peers=[0-9]*" "$log_file" 2>/dev/null | tail -1 | grep -o "[0-9]*")
-        if [ -n "$peer_count" ]; then
-            echo "连接节点数: $peer_count"
+        echo -e "${GREEN}[网络状态]${NC}"
+
+        # 检查 RPC 端口是否开启
+        if netstat -tln 2>/dev/null | grep -q ":8789 " || ss -tln 2>/dev/null | grep -q ":8789 "; then
+            echo -e "RPC 端口: ${GREEN}正常 (8789)${NC}"
+        else
+            echo -e "RPC 端口: ${YELLOW}检测中...${NC}"
         fi
 
-        # 检查同步状态
-        local sync_status=$(tail -20 "$log_file" | grep -i "sync\|import\|best block" | tail -3)
-        if [ -n "$sync_status" ]; then
-            echo ""
-            echo -e "${GREEN}[同步状态]${NC}"
-            echo "$sync_status" | while read line; do
-                echo "  $line"
-            done
+        # 从日志提取区块高度 - 多种模式匹配
+        local block_num=""
+
+        # 尝试匹配 "best block: #数字" 或 "imported block #数字"
+        block_num=$(tail -100 "$log_file" | grep -oE "(best block|imported block|block).*#[0-9]+" | grep -oE "#[0-9]+" | tail -1 | tr -d '#')
+
+        # 如果没找到，尝试其他模式
+        if [ -z "$block_num" ]; then
+            block_num=$(tail -100 "$log_file" | grep -oE "block [0-9]+" | grep -oE "[0-9]+" | tail -1)
         fi
+
+        # 如果没找到，尝试十六进制区块哈希模式
+        if [ -z "$block_num" ]; then
+            block_num=$(tail -100 "$log_file" | grep -oE "0x[0-9a-f]{64}" | wc -l)
+            if [ "$block_num" -gt 0 ]; then
+                echo -e "区块同步: ${GREEN}活跃${NC} (最近处理 $block_num 个区块)"
+                block_num=""
+            fi
+        fi
+
+        if [ -n "$block_num" ] && [ "$block_num" -gt 0 ]; then
+            echo -e "当前区块: ${GREEN}#$block_num${NC}"
+        fi
+
+        # 提取连接的节点数 - 多种模式
+        local peer_info=$(tail -50 "$log_file" | grep -iE "peer|connect|node" | tail -3)
+        if [ -n "$peer_info" ]; then
+            # 尝试提取数字
+            local peer_count=$(echo "$peer_info" | grep -oE "[0-9]+ (peer|node)" | grep -oE "[0-9]+" | tail -1)
+            if [ -n "$peer_count" ]; then
+                echo "连接节点数: $peer_count"
+            fi
+        fi
+
+        # 检查是否正在同步
+        local is_syncing=$(tail -20 "$log_file" | grep -i "sync")
+        if [ -n "$is_syncing" ]; then
+            echo -e "同步状态: ${YELLOW}同步中${NC}"
+        else
+            echo -e "同步状态: ${GREEN}已同步${NC}"
+        fi
+
+        echo ""
+        echo -e "${GREEN}[最近日志]${NC} (最后5行)"
+        tail -5 "$log_file" | sed 's/^/  /'
+    else
+        echo -e "${YELLOW}未找到日志文件，无法显示网络状态${NC}"
     fi
 
     echo ""
